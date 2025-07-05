@@ -1,0 +1,78 @@
+{
+  "version": "1.0.0",
+  "source": "visionary-ui-test",
+  "imageAnalysis": {
+    "colors": [
+      {
+        "name": "Primary Blue",
+        "color": { "r": 0.2, "g": 0.4, "b": 1.0 },
+        "opacity": 1
+      },
+      {
+        "name": "Success Green", 
+        "color": { "r": 0.0, "g": 0.8, "b": 0.4 },
+        "opacity": 1
+      },
+      {
+        "name": "Background Gray",
+        "color": { "r": 0.95, "g": 0.95, "b": 0.95 },
+        "opacity": 1
+      }
+    ],
+    "typography": [
+      {
+        "text": "Welcome to Visionary UI",
+        "fontSize": 24,
+        "fontFamily": "Inter",
+        "fontWeight": "Bold",
+        "x": 20,
+        "y": 20,
+        "width": 300,
+        "height": 32
+      },
+      {
+        "text": "Transform images into components",
+        "fontSize": 16,
+        "fontFamily": "Inter", 
+        "fontWeight": "Regular",
+        "x": 20,
+        "y": 60,
+        "width": 280,
+        "height": 20
+      }
+    ],
+    "components": [
+      {
+        "id": "test-button-1",
+        "name": "Primary Button",
+        "type": "button",
+        "x": 20,
+        "y": 100,
+        "width": 120,
+        "height": 40,
+        "text": "Get Started",
+        "fills": [{"type": "SOLID", "color": {"r": 0.2, "g": 0.4, "b": 1.0}}]
+      },
+      {
+        "id": "test-card-1",
+        "name": "Feature Card", 
+        "type": "card",
+        "x": 20,
+        "y": 160,
+        "width": 280,
+        "height": 120,
+        "fills": [{"type": "SOLID", "color": {"r": 1.0, "g": 1.0, "b": 1.0}}]
+      },
+      {
+        "id": "test-input-1",
+        "name": "Email Input",
+        "type": "input", 
+        "x": 20,
+        "y": 300,
+        "width": 200,
+        "height": 40,
+        "fills": [{"type": "SOLID", "color": {"r": 1.0, "g": 1.0, "b": 1.0}}]
+      }
+    ]
+  }
+}

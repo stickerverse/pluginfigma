@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Image Analyzer Extension - Installation Guide</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 {
+      color: #1a73e8;
+    }
+    h2 {
+      margin-top: 30px;
+      color: #202124;
+    }
+    .step {
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-left: 4px solid #1a73e8;
+    }
+    code {
+      background-color: #f1f3f4;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    img {
+      max-width: 100%;
+      border: 1px solid #dadce0;
+      border-radius: 4px;
+      margin: 15px 0;
+    }
+    .note {
+      background-color: #fef7e0;
+      border-left: 4px solid #f29900;
+      padding: 10px 15px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Image Analyzer Chrome Extension - Installation Guide</h1>
+  
+  <p>This guide will help you install and test the Image Analyzer Chrome extension.</p>
+  
+  <div class="step">
+    <h2>Step 1: Load the Extension</h2>
+    <ol>
+      <li>Open Chrome and navigate to <code>chrome://extensions/</code></li>
+      <li>Enable "Developer mode" using the toggle in the top right</li>
+      <li>Click "Load unpacked" and select the <code>chrome-extension</code> folder</li>
+      <li>The extension should now appear in your extensions list</li>
+    </ol>
+  </div>
+  
+  <div class="note">
+    <strong>Note:</strong> If you see an error about missing icons, you can ignore it. The extension will still function without them.
+  </div>
+  
+  <div class="step">
+    <h2>Step 2: Verify the Extension Is Working</h2>
+    <ol>
+      <li>Look for the Image Analyzer icon in your Chrome toolbar (you may need to click the puzzle piece icon to see all extensions)</li>
+      <li>Click on the Image Analyzer icon to open the popup</li>
+      <li>You should see the extension interface with "Analyze Images on Page" and "Upload an Image" buttons</li>
+    </ol>
+  </div>
+  
+  <div class="step">
+    <h2>Step 3: Test the Extension</h2>
+    <ol>
+      <li>Open the included <code>test.html</code> file in Chrome</li>
+      <li>Click on the extension icon</li>
+      <li>Click "Analyze Images on Page"</li>
+      <li>Select one of the sample images to analyze</li>
+      <li>Alternatively, click "Upload an Image" to test with your own UI mockup</li>
+    </ol>
+  </div>
+  
+  <div class="note">
+    <strong>Important:</strong> Make sure you've added your Google Cloud Vision API key in the <code>config.js</code> file. The extension will not work without a valid API key.
+  </div>
+  
+  <div class="step">
+    <h2>Step 4: Review the Results</h2>
+    <p>After analyzing an image, you should see:</p>
+    <ul>
+      <li>Detected UI components (buttons, text fields, etc.)</li>
+      <li>Extracted color palette</li>
+      <li>Identified text elements and their properties</li>
+    </ul>
+  </div>
+  
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li>If the extension doesn't appear to load, check for any errors in the Chrome Extensions page</li>
+    <li>If image analysis fails, verify your API key is correct and that you have billing enabled for the Vision API</li>
+    <li>Use Chrome DevTools to check for console errors by right-clicking the extension popup and selecting "Inspect"</li>
+  </ul>
+  
+  <p>This extension demonstrates the core functionality of the Image-to-Figma Component Converter and can be used for testing image analysis capabilities before implementing the full Figma plugin.</p>
+</body>
+</html>

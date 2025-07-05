@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sticker Component Analyzer</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      width: 350px;
+      margin: 0;
+      padding: 0;
+      color: #333;
+    }
+    header {
+      background: linear-gradient(135deg, #6e8efb, #a777e3);
+      color: white;
+      padding: 15px;
+      text-align: center;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      align-items: center;
+    }
+    .main-action {
+      background-color: #4e68f9;
+      color: white;
+      border: none;
+      padding: 14px 24px;
+      border-radius: 30px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 10px rgba(78, 104, 249, 0.3);
+      width: 100%;
+      max-width: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .main-action:hover {
+      background-color: #3a51da;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(78, 104, 249, 0.4);
+    }
+    .main-action svg {
+      width: 20px;
+      height: 20px;
+    }
+    .instructions {
+      background-color: #f9f9f9;
+      border-radius: 8px;
+      padding: 15px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #555;
+      text-align: center;
+      border-left: 4px solid #4e68f9;
+    }
+    .instructions strong {
+      color: #4e68f9;
+    }
+    #status {
+      font-size: 14px;
+      color: #666;
+      margin-top: 10px;
+      min-height: 20px;
+      text-align: center;
+      padding: 10px;
+    }
+    .loading {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .loading.active {
+      display: flex;
+    }
+    .spinner {
+      width: 22px;
+      height: 22px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #4e68f9;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    .progress-container {
+      width: 100%;
+      background-color: #f1f1f1;
+      border-radius: 30px;
+      height: 10px;
+      margin-top: 10px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: #4e68f9;
+      transition: width 0.4s ease;
+    }
+    .progress-container.active {
+      display: block;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .success-message {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 20px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Sticker Component Analyzer</h1>
+    
+    <button id="start-capture" class="main-action">
+      🎯 Start Component Capture
+    </button>
+    
+    <div class="instructions">
+      <strong>How it works:</strong> Click the button above, then hover and click on any UI component on a webpage to capture it and send it directly to your Figma plugin.
+    </div>
+    
+    <div id="status">Initializing extension...</div>
+    
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>Processing...</span>
+    </div>
+    
+    <div class="progress-container" id="progress-container">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    
+    <div class="success-message" id="success-message">
+      ✅ Component sent to Figma successfully!
+    </div>
+    
+    <div id="component-list" class="component-list" style="display: none">
+      <h3>Captured Components</h3>
+      <div id="components-container"></div>
+    </div>
+
+    <div class="footer">
+      Seamlessly create system-ready Figma components from any website
+    </div>
+  </div>
+
+  <!-- Only include scripts that actually exist in the extension directory -->
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "stickerverse-plugin",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "build-figma-plugin --minify",
+    "dev": "build-figma-plugin --watch"
+  },
+  "dependencies": {
+    "@create-figma-plugin/utilities": "^2.5.0"
+  },
+  "devDependencies": {
+    "@create-figma-plugin/build": "^2.5.0",
+    "@create-figma-plugin/tsconfig": "^2.5.0",
+    "@figma/plugin-typings": "^1.50.0",
+    "typescript": "^4.7.4"
+  },
+  "figma-plugin": {
+    "id": "stickerverse-plugin",
+    "name": "Stickerverse Plugin",
+    "main": "src/main.ts",
+    "ui": "src/ui.tsx"
+  }
+}
