@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+      margin-top: 0;
+      color: #333;
+      font-size: 20px;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    
+    .status.connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    
+    .status.connected .status-indicator {
+      background: #28a745;
+    }
+    
+    .status.disconnected .status-indicator {
+      background: #dc3545;
+    }
+    
+    .info {
+      background: #e9ecef;
+      padding: 15px;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #495057;
+    }
+    
+    .preview {
+      margin-top: 20px;
+      padding: 20px;
+      border: 2px dashed #dee2e6;
+      border-radius: 6px;
+      text-align: center;
+      color: #6c757d;
+    }
+    
+    .preview img {
+      max-width: 100%;
+      max-height: 200px;
+      margin-top: 10px;
+      border-radius: 4px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .log {
+      margin-top: 20px;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 12px;
+      max-height: 150px;
+      overflow-y: auto;
+      color: #495057;
+    }
+    
+    .log-entry {
+      margin-bottom: 4px;
+    }
+    
+    .log-entry.error {
+      color: #dc3545;
+    }
+    
+    .log-entry.success {
+      color: #28a745;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Canvas Weaver</h1>
+    
+    <div id="status" class="status disconnected">
+      <div class="status-indicator"></div>
+      <span id="status-text">Connecting to server...</span>
+    </div>
+    
+    <div class="info">
+      <strong>How to use:</strong><br>
+      1. Make sure the Canvas Weaver server is running<br>
+      2. Open the Chrome extension and select a component on any webpage<br>
+      3. The component will automatically appear here for generation
+    </div>
+    
+    <div id="preview" class="preview">
+      <span id="preview-text">Waiting for component data...</span>
+    </div>
+    
+    <div id="log" class="log"></div>
+  </div>
+
+  <script>
+    class FigmaWebSocketClient {
+      constructor() {
+        this.ws = null;
+        this.isConnected = false;
+        this.reconnectInterval = 5000;
+        this.reconnectTimer = null;
+        this.connect();
+      }
+
+      connect() {
+        this.addLog('Attempting to connect to WebSocket server...');
+        
+        try {
+          this.ws = new WebSocket('ws://localhost:8080');
+          
+          this.ws.onopen = () => {
+            this.addLog('WebSocket connected', 'success');
+            this.isConnected = true;
+            this.updateStatus(true);
+            
+            if (this.reconnectTimer) {
+              clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = null;
+            }
+            
+            // Identify ourselves
+            this.ws.send(JSON.stringify({
+              type: 'identify',
+              id: 'figma'
+            }));
+          };
+
+          this.ws.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              this.addLog(`Received message: ${message.type}`);
+              
+              if (message.type === 'identified') {
+                this.addLog('Successfully identified with server', 'success');
+              } else if (message.type === 'connectionStatus') {
+                this.updateConnectionStatus(message.status);
+              } else if (message.type === 'componentData') {
+                this.handleComponentData(message.payload);
+              }
+            } catch (error) {
+              this.addLog(`Error parsing message: ${error.message}`, 'error');
+            }
+          };
+
+          this.ws.onclose = () => {
+            this.addLog('WebSocket disconnected');
+            this.isConnected = false;
+            this.updateStatus(false);
+            this.scheduleReconnect();
+          };
+
+          this.ws.onerror = (error) => {
+            this.addLog('WebSocket error occurred', 'error');
+            this.isConnected = false;
+            this.updateStatus(false);
+          };
+        } catch (error) {
+          this.addLog(`Failed to create WebSocket: ${error.message}`, 'error');
+          this.scheduleReconnect();
+        }
+      }
+
+      scheduleReconnect() {
+        if (!this.reconnectTimer) {
+          this.addLog(`Scheduling reconnection in ${this.reconnectInterval}ms`);
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connect();
+          }, this.reconnectInterval);
+        }
+      }
+
+      updateStatus(connected) {
+        const statusEl = document.getElementById('status');
+        const statusTextEl = document.getElementById('status-text');
+        
+        if (connected) {
+          statusEl.className = 'status connected';
+          statusTextEl.textContent = 'Connected to Canvas Weaver server';
+        } else {
+          statusEl.className = 'status disconnected';
+          statusTextEl.textContent = 'Disconnected from server';
+        }
+      }
+
+      updateConnectionStatus(status) {
+        if (status.extension) {
+          this.addLog('Chrome extension is connected', 'success');
+        } else {
+          this.addLog('Chrome extension is not connected');
+        }
+      }
+
+      handleComponentData(payload) {
+        this.addLog('Received component data from Chrome extension', 'success');
+        
+        // Show preview
+        const previewEl = document.getElementById('preview');
+        const previewTextEl = document.getElementById('preview-text');
+        
+        if (payload.imageBase64) {
+          previewTextEl.textContent = 'Component received! Generating Figma layers...';
+          
+          // Create preview image
+          const img = document.createElement('img');
+          img.src = `data:image/png;base64,${payload.imageBase64}`;
+          img.onload = () => {
+            previewEl.appendChild(img);
+          };
+          
+          // Send to Figma plugin code
+          parent.postMessage({
+            pluginMessage: {
+              type: 'generateComponentFromImage',
+              base64: payload.imageBase64,
+              metadata: payload.metadata
+            }
+          }, '*');
+          
+          this.addLog('Sent component data to Figma for generation', 'success');
+        }
+      }
+
+      addLog(message, type = '') {
+        const logEl = document.getElementById('log');
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        
+        const timestamp = new Date().toLocaleTimeString();
+        entry.textContent = `[${timestamp}] ${message}`;
+        
+        logEl.appendChild(entry);
+        logEl.scrollTop = logEl.scrollHeight;
+        
+        // Keep only last 50 entries
+        while (logEl.children.length > 50) {
+          logEl.removeChild(logEl.firstChild);
+        }
+      }
+    }
+
+    // Initialize WebSocket client when page loads
+    const wsClient = new FigmaWebSocketClient();
+  </script>
+</body>
+</html>

@@ -1,100 +1,137 @@
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const dotenv = require('dotenv');
+const WebSocket = require('ws');
+const http = require('http');
 
-// Load environment variables
-dotenv.config();
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Enable CORS for extension requests
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-
-// Default API key from env (optional, can be overridden in requests)
-const DEFAULT_API_KEY = process.env.GOOGLE_CLOUD_API_KEY;
-
-app.post('/api/analyze', async (req, res) => {
-  try {
-    // Get base64 image and API key from request body
-    const { image, apiKey } = req.body;
+class WebSocketBroker {
+  constructor(port = 8080) {
+    this.clients = new Map();
+    this.server = http.createServer();
+    this.wss = new WebSocket.Server({ server: this.server });
     
-    if (!image) {
-      return res.status(400).json({ error: 'No image provided' });
-    }
+    this.setupWebSocketServer();
+    this.startHeartbeat();
     
-    // Use API key from request or fall back to default
-    const key = apiKey || DEFAULT_API_KEY;
-    
-    if (!key) {
-      return res.status(400).json({ 
-        error: 'No API key provided',
-        details: 'Please provide an API key in the request or set GOOGLE_CLOUD_API_KEY in the server environment'
-      });
-    }
-    
-    // Prepare Vision API request body
-    const visionRequest = {
-      requests: [
-        {
-          image: { content: image },
-          features: [
-            { type: 'LABEL_DETECTION', maxResults: 10 },
-            { type: 'TEXT_DETECTION' },
-            { type: 'OBJECT_LOCALIZATION' },
-            { type: 'IMAGE_PROPERTIES' },
-            { type: 'DOCUMENT_TEXT_DETECTION' }
-          ]
+    this.server.listen(port, () => {
+      console.log(`[Canvas Weaver Server] WebSocket broker listening on ws://localhost:${port}`);
+    });
+  }
+
+  setupWebSocketServer() {
+    this.wss.on('connection', (ws, req) => {
+      console.log('[Canvas Weaver Server] New connection attempt');
+      
+      let clientId = null;
+
+      ws.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          
+          // Handle initial identification
+          if (message.type === 'identify') {
+            clientId = message.id;
+            
+            if (clientId === 'figma' || clientId === 'extension') {
+              // Remove any existing client with same ID
+              const existing = this.clients.get(clientId);
+              if (existing) {
+                console.log(`[Canvas Weaver Server] Replacing existing ${clientId} connection`);
+                existing.ws.close();
+              }
+              
+              // Register new client
+              this.clients.set(clientId, {
+                id: clientId,
+                ws,
+                isAlive: true
+              });
+              
+              console.log(`[Canvas Weaver Server] Client registered: ${clientId}`);
+              ws.send(JSON.stringify({ type: 'identified', status: 'connected' }));
+              
+              // Notify other client of connection
+              this.notifyConnectionStatus();
+            } else {
+              console.error('[Canvas Weaver Server] Invalid client ID:', clientId);
+              ws.close();
+            }
+          } 
+          // Handle message forwarding
+          else if (clientId) {
+            const targetId = clientId === 'figma' ? 'extension' : 'figma';
+            const target = this.clients.get(targetId);
+            
+            console.log(`[Canvas Weaver Server] Forwarding message from ${clientId} to ${targetId}`);
+            console.log('[Canvas Weaver Server] Message type:', message.type);
+            
+            if (target && target.ws.readyState === WebSocket.OPEN) {
+              target.ws.send(JSON.stringify(message));
+              console.log('[Canvas Weaver Server] Message forwarded successfully');
+            } else {
+              console.warn(`[Canvas Weaver Server] Target ${targetId} not connected`);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                message: `Target ${targetId} is not connected` 
+              }));
+            }
+          }
+        } catch (error) {
+          console.error('[Canvas Weaver Server] Error processing message:', error);
         }
-      ]
+      });
+
+      ws.on('pong', () => {
+        const client = clientId ? this.clients.get(clientId) : null;
+        if (client) {
+          client.isAlive = true;
+        }
+      });
+
+      ws.on('close', () => {
+        if (clientId) {
+          console.log(`[Canvas Weaver Server] Client disconnected: ${clientId}`);
+          this.clients.delete(clientId);
+          this.notifyConnectionStatus();
+        }
+      });
+
+      ws.on('error', (error) => {
+        console.error(`[Canvas Weaver Server] WebSocket error for ${clientId}:`, error);
+      });
+    });
+  }
+
+  notifyConnectionStatus() {
+    const status = {
+      figma: this.clients.has('figma'),
+      extension: this.clients.has('extension')
     };
     
-    // Call Vision API directly using axios
-    const visionResponse = await axios({
-      method: 'post',
-      url: `https://vision.googleapis.com/v1/images:annotate?key=${key}`,
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      data: visionRequest
+    this.clients.forEach(client => {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({
+          type: 'connectionStatus',
+          status
+        }));
+      }
     });
-    
-    // Return the API response
-    res.json(visionResponse.data);
-  } catch (error) {
-    console.error('Vision API error:', error);
-    
-    // Handle axios errors
-    if (error.response) {
-      // The request was made and the server responded with a status code outside of 2xx
-      return res.status(error.response.status).json({
-        error: 'Google Vision API error',
-        details: error.response.data.error || error.message,
-        status: error.response.status
-      });
-    } else if (error.request) {
-      // The request was made but no response was received
-      return res.status(500).json({
-        error: 'Failed to connect to Google Vision API',
-        details: 'No response received'
-      });
-    } else {
-      // Something happened in setting up the request
-      return res.status(500).json({ 
-        error: 'Failed to analyze image',
-        details: error.message 
-      });
-    }
   }
-});
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
+  startHeartbeat() {
+    setInterval(() => {
+      this.clients.forEach((client, id) => {
+        if (!client.isAlive) {
+          console.log(`[Canvas Weaver Server] Client ${id} failed heartbeat, terminating`);
+          client.ws.terminate();
+          this.clients.delete(id);
+          this.notifyConnectionStatus();
+          return;
+        }
+        
+        client.isAlive = false;
+        client.ws.ping();
+      });
+    }, 30000); // 30 second heartbeat
+  }
+}
 
-app.listen(port, () => {
-  console.log(`Vision API proxy server listening at http://localhost:${port}`);
-});
+// Start the server
+new WebSocketBroker(8080);

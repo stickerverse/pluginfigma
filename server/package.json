@@ -9,6 +9,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "ws": "^8.16.0"
   },
   "devDependencies": {
