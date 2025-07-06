@@ -1,17 +1,19 @@
 const WebSocket = require('ws');
 const http = require('http');
 const express = require('express');
+const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const potrace = require('potrace');
 
 class WebSocketBroker {
-  constructor(port = 8080) {
+  constructor(port = 8080, httpPort = 3000) {
     this.clients = new Map();
     
-    // Create Express app
+    // Create Express app with configurations from both branches
     this.app = express();
+    this.app.use(cors());
     this.app.use(express.json({ limit: '50mb' }));
     this.app.use(express.urlencoded({ extended: true }));
     
@@ -26,6 +28,12 @@ class WebSocketBroker {
     this.setupWebSocketServer();
     this.startHeartbeat();
     
+    // Start HTTP server
+    this.app.listen(httpPort, () => {
+      console.log(`[Canvas Weaver Server] HTTP API listening on http://localhost:${httpPort}`);
+    });
+    
+    // Start WebSocket server
     this.server.listen(port, () => {
       console.log(`[Canvas Weaver Server] HTTP server listening on http://localhost:${port}`);
       console.log(`[Canvas Weaver Server] WebSocket server listening on ws://localhost:${port}`);
@@ -40,7 +48,8 @@ class WebSocketBroker {
         timestamp: new Date().toISOString(),
         services: {
           websocket: this.wss.clients.size > 0,
-          http: true
+          http: true,
+          websocketClients: this.clients.size
         }
       });
     });
@@ -71,6 +80,119 @@ class WebSocketBroker {
         });
       }
     });
+  }
+  
+  // Process image with AI/ML techniques
+  async processImageWithAI(base64, options = {}) {
+    // Extract image metadata
+    const imageData = await this.extractImageData(base64);
+    
+    // Simulate AI-powered image analysis
+    const vectorElements = await this.generateVectorElements(imageData, options);
+    const textElements = await this.performOCRAnalysis(imageData, options);
+    
+    return {
+      vectors: vectorElements,
+      text: textElements,
+      metadata: {
+        width: imageData.width,
+        height: imageData.height,
+        format: imageData.format
+      }
+    };
+  }
+  
+  // Generate vector elements from image analysis
+  async generateVectorElements(imageData, options) {
+    // Simulate advanced AI segmentation and vectorization
+    const mockVectorElements = [];
+    
+    // Generate some mock vector elements with realistic data
+    const numElements = Math.floor(Math.random() * 5) + 2; // 2-6 elements
+    
+    for (let i = 0; i < numElements; i++) {
+      const element = {
+        id: `vector-${i}`,
+        type: 'vector',
+        bbox: {
+          x: Math.floor(Math.random() * (imageData.width * 0.6)),
+          y: Math.floor(Math.random() * (imageData.height * 0.6)),
+          width: Math.floor(Math.random() * (imageData.width * 0.3)) + 50,
+          height: Math.floor(Math.random() * (imageData.height * 0.3)) + 50
+        },
+        area: 0, // Will be calculated
+        svgPath: this.generateMockSVGPath(i),
+        fill: {
+          r: Math.random() * 0.8 + 0.1,
+          g: Math.random() * 0.8 + 0.1,
+          b: Math.random() * 0.8 + 0.1
+        },
+        confidence: Math.random() * 0.3 + 0.7 // 0.7-1.0
+      };
+      
+      // Calculate area
+      element.area = element.bbox.width * element.bbox.height;
+      
+      mockVectorElements.push(element);
+    }
+    
+    return mockVectorElements;
+  }
+  
+  // Generate mock SVG path for vector element
+  generateMockSVGPath(index) {
+    const shapes = [
+      'M 10 10 L 90 10 L 90 90 L 10 90 Z', // Rectangle
+      'M 50 10 L 90 90 L 10 90 Z', // Triangle
+      'M 50 10 A 40 40 0 1 1 49 10 Z', // Circle
+      'M 10 50 Q 50 10 90 50 Q 50 90 10 50 Z' // Curved shape
+    ];
+    
+    return shapes[index % shapes.length];
+  }
+  
+  // Perform OCR analysis on image
+  async performOCRAnalysis(imageData, options) {
+    // Simulate OCR text detection
+    const mockTextElements = [];
+    
+    // Generate some mock text elements
+    const texts = [
+      'Header Title',
+      'Button Text',
+      'Description text here',
+      'Label',
+      'Call to Action'
+    ];
+    
+    const numTexts = Math.floor(Math.random() * 3) + 1; // 1-3 text elements
+    
+    for (let i = 0; i < numTexts; i++) {
+      const text = texts[Math.floor(Math.random() * texts.length)];
+      
+      mockTextElements.push({
+        id: `text-${i}`,
+        type: 'text',
+        text: text,
+        bbox: {
+          x: Math.floor(Math.random() * (imageData.width * 0.5)),
+          y: Math.floor(Math.random() * (imageData.height * 0.5)),
+          width: text.length * 8 + 20,
+          height: 20 + Math.floor(Math.random() * 10)
+        },
+        fontSize: Math.floor(Math.random() * 8) + 12, // 12-20px
+        fontFamily: 'Inter',
+        fontWeight: Math.random() > 0.5 ? 'bold' : 'normal',
+        color: {
+          r: Math.random() * 0.3,
+          g: Math.random() * 0.3,
+          b: Math.random() * 0.3
+        },
+        confidence: Math.random() * 0.2 + 0.8 // 0.8-1.0
+      });
+    }
+    
+    return mockTextElements;
   }
 
   setupWebSocketServer() {

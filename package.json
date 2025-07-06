@@ -6,19 +6,23 @@
     "dev": "build-figma-plugin --watch"
   },
   "dependencies": {
+    "@create-figma-plugin/ui": "^3.2.1",
     "@create-figma-plugin/utilities": "^2.5.0",
+    "preact": "^10.26.9",
+    "tesseract.js": "^6.0.1",
     "canvas": "^3.1.2"
   },
   "devDependencies": {
     "@create-figma-plugin/build": "^2.5.0",
     "@create-figma-plugin/tsconfig": "^2.5.0",
     "@figma/plugin-typings": "^1.50.0",
+    "@types/tesseract.js": "^0.0.2",
     "typescript": "^4.7.4"
   },
   "figma-plugin": {
     "id": "canvas-weaver",
     "name": "Canvas Weaver",
     "main": "src/code.ts",
-    "ui": "ui.html"
+    "ui": "src/ui.tsx"
   }
 }

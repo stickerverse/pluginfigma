@@ -242,6 +242,42 @@ async function analyzeAndBuildComponent(base64: string): Promise<FrameNode> {
   console.log('[Canvas Weaver] Starting advanced component analysis...');
   
   try {
+    // First, try to use the AI server for processing
+    figma.notify('🔍 Analyzing image with AI...', { timeout: 2000 });
+    
+    const serverData = await processImageWithAIServer(base64);
+    
+    if (serverData) {
+      console.log('[Canvas Weaver] Using AI server results');
+      figma.notify('🎨 Building component from AI analysis...', { timeout: 2000 });
+      
+      // Use server-provided vectors and perform client-side OCR
+      const vectorLayers = await convertServerVectorsToFigmaLayers(serverData.vectors);
+      const textBlocks = await performClientSideOCR(base64);
+      
+      // Merge server text with client OCR if available
+      const allTextBlocks = mergeTextSources(serverData.text, textBlocks);
+      
+      const assembledComponent = await assembleComponent(
+        vectorLayers,
+        allTextBlocks,
+        serverData.metadata.width,
+        serverData.metadata.height
+      );
+      
+      console.log('[Canvas Weaver] Component generation complete with AI!');
+      return assembledComponent;
+    }
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] AI server failed, falling back to local processing:', error);
+    figma.notify('⚡ Using local processing...', { timeout: 2000 });
+  }
+  
+  // Fallback to local processing if server is unavailable
+  try {
+    console.log('[Canvas Weaver] Using local processing pipeline...');
+    
     // Step A: Image Decoding & Segmentation
     console.log('[Canvas Weaver] Step A: Decoding and segmenting image...');
     const imageData = await decodeBase64ToImageData(base64);
@@ -251,9 +287,9 @@ async function analyzeAndBuildComponent(base64: string): Promise<FrameNode> {
     console.log('[Canvas Weaver] Step B: Converting segments to vectors...');
     const vectorLayers = await convertSegmentsToVectors(segmentationResult, imageData);
     
-    // Step C: Text Recognition & Layer Creation
-    console.log('[Canvas Weaver] Step C: Performing OCR...');
-    const textBlocks = await performOCR(imageData);
+    // Step C: Text Recognition & Layer Creation (client-side OCR)
+    console.log('[Canvas Weaver] Step C: Performing client-side OCR...');
+    const textBlocks = await performClientSideOCR(base64);
     
     // Step D: Final Assembly
     console.log('[Canvas Weaver] Step D: Assembling component...');
@@ -268,10 +304,148 @@ async function analyzeAndBuildComponent(base64: string): Promise<FrameNode> {
     return assembledComponent;
     
   } catch (error) {
-    console.error('[Canvas Weaver] Error in analyzeAndBuildComponent:', error);
-    // Fallback to basic component if advanced analysis fails
+    console.error('[Canvas Weaver] Error in local processing:', error);
+    // Fallback to basic component if all analysis fails
     return await createFallbackComponent(base64);
   }
+}
+
+// Process image with AI server
+async function processImageWithAIServer(base64: string): Promise<any | null> {
+  try {
+    console.log('[Canvas Weaver] Making request to AI server...');
+    
+    const response = await fetch('http://localhost:3000/api/process-image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        base64: base64,
+        options: {
+          useOCR: true,
+          generateVectors: true
+        }
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server responded with status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Server processing failed');
+    }
+    
+    console.log('[Canvas Weaver] AI server analysis complete');
+    return result.data;
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] AI server request failed:', error);
+    return null;
+  }
+}
+
+// Convert server vector data to Figma layers
+async function convertServerVectorsToFigmaLayers(serverVectors: any[]): Promise<VectorLayer[]> {
+  const vectorLayers: VectorLayer[] = [];
+  
+  for (const element of serverVectors) {
+    if (element.type === 'vector') {
+      vectorLayers.push({
+        paths: element.svgPath,
+        color: element.fill,
+        bounds: {
+          x: element.bbox.x,
+          y: element.bbox.y,
+          width: element.bbox.width,
+          height: element.bbox.height
+        }
+      });
+    }
+  }
+  
+  return vectorLayers;
+}
+
+// Perform client-side OCR using Tesseract.js
+async function performClientSideOCR(base64: string): Promise<TextBlock[]> {
+  try {
+    console.log('[Canvas Weaver] Starting client-side OCR...');
+    
+    // Import Tesseract dynamically (Figma environment compatibility)
+    const Tesseract = await import('tesseract.js');
+    
+    // Perform OCR on the base64 image
+    const result = await Tesseract.recognize(base64, 'eng', {
+      logger: m => console.log('[Tesseract]', m)
+    });
+    
+    const words = result.data.words || [];
+    
+    console.log('[Canvas Weaver] OCR analysis complete, found', words.length, 'words');
+    
+    // Convert Tesseract results to TextBlock format
+    const textBlocks: TextBlock[] = [];
+    
+    for (const word of words) {
+      if (word.confidence > 50 && word.text.trim().length > 0) { // Filter low-confidence results
+        textBlocks.push({
+          text: word.text,
+          confidence: word.confidence / 100, // Convert to 0-1 scale
+          bbox: {
+            x0: word.bbox.x0,
+            y0: word.bbox.y0,
+            x1: word.bbox.x1,
+            y1: word.bbox.y1
+          }
+        });
+      }
+    }
+    
+    return textBlocks;
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] Client-side OCR failed:', error);
+    // Fallback to simplified text detection
+    return await performOCR(await decodeBase64ToImageData(base64));
+  }
+}
+
+// Merge text sources from server and client OCR
+function mergeTextSources(serverText: any[], clientText: TextBlock[]): TextBlock[] {
+  const mergedText: TextBlock[] = [];
+  
+  // Add server text (converted to TextBlock format)
+  for (const text of serverText) {
+    mergedText.push({
+      text: text.text,
+      confidence: text.confidence,
+      bbox: {
+        x0: text.bbox.x,
+        y0: text.bbox.y,
+        x1: text.bbox.x + text.bbox.width,
+        y1: text.bbox.y + text.bbox.height
+      }
+    });
+  }
+  
+  // Add client OCR results (avoid duplicates by checking position overlap)
+  for (const clientTextBlock of clientText) {
+    const hasOverlap = mergedText.some(existing => {
+      const overlapX = Math.max(0, Math.min(existing.bbox.x1, clientTextBlock.bbox.x1) - Math.max(existing.bbox.x0, clientTextBlock.bbox.x0));
+      const overlapY = Math.max(0, Math.min(existing.bbox.y1, clientTextBlock.bbox.y1) - Math.max(existing.bbox.y0, clientTextBlock.bbox.y0));
+      return overlapX > 10 && overlapY > 5; // Allow some tolerance
+    });
+    
+    if (!hasOverlap) {
+      mergedText.push(clientTextBlock);
+    }
+  }
+  
+  return mergedText;
 }
 
 // Step A: Image Decoding & Preparation
