@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Sticker Component Analyzer",
+  "version": "1.0",
+  "description": "Analyze web UI components and create system-ready Figma components",
+  "action": {
+    "default_popup": "enhanced-popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*",
+    "*://*.figma.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["enhanced-content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [{
+    "resources": [
+      "dom-crawler.js",
+      "element-inspector.js",
+      "dist/index.js",
+      "dist/capture.js",
+      "dist/content.js"
+    ],
+    "matches": ["<all_urls>"]
+  }]
+}

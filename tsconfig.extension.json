@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "./chrome-extension/dist",
+    "rootDir": "./src/extension",
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/extension/**/*.ts"],
+  "exclude": ["node_modules", "chrome-extension/dist"]
+}

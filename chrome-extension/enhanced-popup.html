@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sticker Component Analyzer - Enhanced</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      width: 380px;
+      margin: 0;
+      padding: 0;
+      color: #333;
+      background: #f8f9fa;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #6e8efb, #a777e3);
+      color: white;
+      padding: 15px;
+      text-align: center;
+    }
+    
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    
+    .container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    
+    .mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: white;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+    }
+    
+    .mode-toggle label {
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: 0.4s;
+      border-radius: 24px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+      background-color: #4e68f9;
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+    
+    .enhanced-options {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #e0e0e0;
+      display: block;
+    }
+    
+    .enhanced-options h3 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .option-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .option-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+    }
+    
+    .option-item label {
+      font-size: 13px;
+      color: #555;
+      flex: 1;
+    }
+    
+    .option-item .toggle-switch {
+      width: 36px;
+      height: 20px;
+    }
+    
+    .option-item .toggle-slider:before {
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+    }
+    
+    .option-item input:checked + .toggle-slider:before {
+      transform: translateX(16px);
+    }
+    
+    .main-action {
+      background-color: #4e68f9;
+      color: white;
+      border: none;
+      padding: 14px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      box-shadow: 0 2px 8px rgba(78, 104, 249, 0.3);
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .main-action:hover {
+      background-color: #3a51da;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(78, 104, 249, 0.4);
+    }
+    
+    .main-action:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .instructions {
+      background-color: white;
+      border-radius: 8px;
+      padding: 15px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #555;
+      text-align: center;
+      border-left: 4px solid #4e68f9;
+      border: 1px solid #e0e0e0;
+    }
+    
+    .instructions strong {
+      color: #4e68f9;
+    }
+    
+    #status {
+      font-size: 13px;
+      color: #666;
+      min-height: 20px;
+      text-align: center;
+      padding: 10px;
+      background: white;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+    }
+    
+    .loading {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    
+    .loading.active {
+      display: flex;
+    }
+    
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #4e68f9;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    .progress-container {
+      width: 100%;
+      background-color: #f1f1f1;
+      border-radius: 10px;
+      height: 8px;
+      margin-top: 10px;
+      overflow: hidden;
+      display: none;
+    }
+    
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: #4e68f9;
+      transition: width 0.4s ease;
+    }
+    
+    .progress-container.active {
+      display: block;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .success-message {
+      display: none;
+      background: #d4edda;
+      color: #155724;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #c3e6cb;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    
+    .components-container {
+      display: none;
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #e0e0e0;
+      margin-top: 10px;
+    }
+    
+    .components-container h3 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    
+    .captured-component {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .captured-component:last-child {
+      border-bottom: none;
+    }
+    
+    .captured-component img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid #e0e0e0;
+    }
+    
+    .component-info {
+      flex: 1;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .footer {
+      text-align: center;
+      font-size: 11px;
+      color: #888;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎯 Sticker Component Analyzer</h1>
+  </header>
+  
+  <div class="container">
+    <!-- Enhanced Mode Toggle -->
+    <div class="mode-toggle">
+      <label for="enhanced-mode-toggle">Enhanced Mode</label>
+      <div class="toggle-switch">
+        <input type="checkbox" id="enhanced-mode-toggle" checked>
+        <span class="toggle-slider"></span>
+      </div>
+    </div>
+    
+    <!-- Enhanced Options -->
+    <div class="enhanced-options" id="enhanced-options">
+      <h3>Capture Options</h3>
+      <div class="option-group">
+        <div class="option-item">
+          <label for="multi-select-toggle">Multi-element selection</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="multi-select-toggle">
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+        
+        <div class="option-item">
+          <label for="preview-toggle">Show preview</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="preview-toggle" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+        
+        <div class="option-item">
+          <label for="high-dpi-toggle">High-DPI capture</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="high-dpi-toggle" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+        
+        <div class="option-item">
+          <label for="shadow-dom-toggle">Include Shadow DOM</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="shadow-dom-toggle" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+        
+        <div class="option-item">
+          <label for="cross-origin-toggle">Cross-origin elements</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="cross-origin-toggle" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Main Action Button -->
+    <button id="start-capture" class="main-action">
+      🎯 Select Element
+    </button>
+    
+    <!-- Instructions -->
+    <div class="instructions">
+      <strong>Enhanced Mode:</strong> Select elements with improved accuracy, high-DPI support, and advanced features like Shadow DOM and cross-origin handling.
+    </div>
+    
+    <!-- Status -->
+    <div id="status">Initializing enhanced extension...</div>
+    
+    <!-- Loading -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>Processing...</span>
+    </div>
+    
+    <!-- Progress -->
+    <div class="progress-container" id="progress-container">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    
+    <!-- Success Message -->
+    <div class="success-message" id="success-message">
+      ✅ Component sent to Figma successfully!
+    </div>
+    
+    <!-- Components Container -->
+    <div id="components-container" class="components-container">
+      <h3>Captured Components</h3>
+    </div>
+    
+    <!-- Footer -->
+    <div class="footer">
+      Enhanced capture with high-DPI, Shadow DOM, and cross-origin support
+    </div>
+  </div>
+
+  <script src="enhanced-popup.js"></script>
+</body>
+</html>

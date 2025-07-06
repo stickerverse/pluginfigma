@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Minimal Figma Plugin</title>
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+      background: #fff;
+      font-size: 14px;
+    }
+    
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 40px);
+      gap: 16px;
+    }
+    
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+    
+    .description {
+      color: #666;
+      font-size: 12px;
+      margin: 0;
+    }
+    
+    .button {
+      background: #007AFF;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .button:hover {
+      background: #0056CC;
+    }
+    
+    .button:active {
+      background: #004BB5;
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin: 0;
+    }
+    
+    .status.success {
+      background: #E6F7E6;
+      color: #006600;
+      border: 1px solid #B3E6B3;
+    }
+    
+    .status.info {
+      background: #E6F3FF;
+      color: #0066CC;
+      border: 1px solid #B3D9FF;
+    }
+    
+    .status.hidden {
+      display: none;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 10px;
+    }
+    
+    .button.secondary {
+      background: #F5F5F5;
+      color: #333;
+    }
+    
+    .button.secondary:hover {
+      background: #E8E8E8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Minimal Figma Plugin</h1>
+    <p class="description">
+      This plugin demonstrates basic Figma plugin functionality:
+      creating shapes and communicating between UI and plugin code.
+    </p>
+    
+    <div class="button-group">
+      <button id="createRectangle" class="button">Create Rectangle</button>
+      <button id="closePlugin" class="button secondary">Close Plugin</button>
+    </div>
+    
+    <p id="status" class="status hidden"></p>
+  </div>
+
+  <script>
+    // Get DOM elements
+    const createButton = document.getElementById('createRectangle');
+    const closeButton = document.getElementById('closePlugin');
+    const status = document.getElementById('status');
+    
+    // Function to show status messages
+    function showStatus(message, type = 'info') {
+      status.textContent = message;
+      status.className = `status ${type}`;
+    }
+    
+    // Function to hide status
+    function hideStatus() {
+      status.className = 'status hidden';
+    }
+    
+    // Create Rectangle button click handler
+    createButton.addEventListener('click', () => {
+      console.log('Create Rectangle button clicked');
+      showStatus('Creating rectangle...', 'info');
+      
+      // Send message to plugin code
+      parent.postMessage({
+        pluginMessage: {
+          type: 'create-rectangle'
+        }
+      }, '*');
+    });
+    
+    // Close Plugin button click handler
+    closeButton.addEventListener('click', () => {
+      console.log('Close Plugin button clicked');
+      
+      // Send message to plugin code
+      parent.postMessage({
+        pluginMessage: {
+          type: 'close-plugin'
+        }
+      }, '*');
+    });
+    
+    // Listen for messages from plugin code
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      
+      console.log('UI received message from plugin:', msg);
+      
+      switch (msg.type) {
+        case 'plugin-ready':
+          showStatus(msg.message, 'success');
+          break;
+          
+        case 'rectangle-created':
+          if (msg.success) {
+            showStatus(msg.message, 'success');
+            // Hide status after 3 seconds
+            setTimeout(hideStatus, 3000);
+          }
+          break;
+          
+        default:
+          console.log('Unknown message type:', msg.type);
+      }
+    };
+    
+    // Initial status
+    showStatus('Waiting for plugin to load...', 'info');
+  </script>
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sticker Component Analyzer</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      width: 350px;
+      margin: 0;
+      padding: 0;
+      color: #333;
+    }
+    header {
+      background: linear-gradient(135deg, #6e8efb, #a777e3);
+      color: white;
+      padding: 15px;
+      text-align: center;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      align-items: center;
+    }
+    .main-action {
+      background-color: #4e68f9;
+      color: white;
+      border: none;
+      padding: 14px 24px;
+      border-radius: 30px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 10px rgba(78, 104, 249, 0.3);
+      width: 100%;
+      max-width: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .main-action:hover {
+      background-color: #3a51da;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(78, 104, 249, 0.4);
+    }
+    .main-action svg {
+      width: 20px;
+      height: 20px;
+    }
+    .instructions {
+      background-color: #f9f9f9;
+      border-radius: 8px;
+      padding: 15px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #555;
+      text-align: center;
+      border-left: 4px solid #4e68f9;
+    }
+    .instructions strong {
+      color: #4e68f9;
+    }
+    #status {
+      font-size: 14px;
+      color: #666;
+      margin-top: 10px;
+      min-height: 20px;
+      text-align: center;
+      padding: 10px;
+    }
+    .loading {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .loading.active {
+      display: flex;
+    }
+    .spinner {
+      width: 22px;
+      height: 22px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #4e68f9;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    .progress-container {
+      width: 100%;
+      background-color: #f1f1f1;
+      border-radius: 30px;
+      height: 10px;
+      margin-top: 10px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: #4e68f9;
+      transition: width 0.4s ease;
+    }
+    .progress-container.active {
+      display: block;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .success-message {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 20px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+    }
+    
+    /* Connection status indicators */
+    .connection-status {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 10px 0;
+      border-left: 4px solid #e9ecef;
+    }
+    
+    .connection-status.connected {
+      border-left-color: #28a745;
+      background: #d4edda;
+    }
+    
+    .connection-status.disconnected {
+      border-left-color: #dc3545;
+      background: #f8d7da;
+    }
+    
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      margin: 4px 0;
+    }
+    
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    
+    .status-dot.connected {
+      background: #28a745;
+    }
+    
+    .status-dot.disconnected {
+      background: #dc3545;
+    }
+    
+    .status-dot.pending {
+      background: #ffc107;
+    }
+    
+    /* Recent captures section */
+    .recent-captures {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      margin: 10px 0;
+    }
+    
+    .capture-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-bottom: 1px solid #f1f3f4;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    
+    .capture-item:hover {
+      background: #f8f9fa;
+    }
+    
+    .capture-item:last-child {
+      border-bottom: none;
+    }
+    
+    .capture-thumbnail {
+      width: 40px;
+      height: 40px;
+      border-radius: 4px;
+      object-fit: cover;
+      border: 1px solid #e9ecef;
+    }
+    
+    .capture-info {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .capture-name {
+      font-weight: 500;
+      font-size: 13px;
+      margin: 0 0 2px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .capture-time {
+      font-size: 11px;
+      color: #6c757d;
+      margin: 0;
+    }
+    
+    .capture-actions {
+      display: flex;
+      gap: 4px;
+    }
+    
+    .capture-action {
+      background: none;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .capture-action:hover {
+      background: #e9ecef;
+    }
+    
+    .capture-action.primary {
+      background: #4e68f9;
+      color: white;
+      border-color: #4e68f9;
+    }
+    
+    .capture-action.primary:hover {
+      background: #3a51da;
+    }
+    
+    /* Quick actions */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 10px 0;
+    }
+    
+    .quick-action {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      padding: 12px 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 12px;
+      color: #495057;
+    }
+    
+    .quick-action:hover {
+      background: #e9ecef;
+      border-color: #adb5bd;
+    }
+    
+    .quick-action-icon {
+      font-size: 16px;
+      margin-bottom: 4px;
+      display: block;
+    }
+    
+    /* Settings panel */
+    .settings-panel {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+      display: none;
+    }
+    
+    .settings-panel.active {
+      display: block;
+    }
+    
+    .settings-row {
+      display: flex;
+      justify-content: between;
+      align-items: center;
+      margin: 10px 0;
+      gap: 10px;
+    }
+    
+    .settings-label {
+      flex: 1;
+      font-size: 13px;
+      color: #495057;
+    }
+    
+    .settings-control {
+      flex-shrink: 0;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 20px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 20px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+      background-color: #4e68f9;
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(14px);
+    }
+    
+    /* Navigation tabs */
+    .nav-tabs {
+      display: flex;
+      border-bottom: 1px solid #dee2e6;
+      margin: 0 -20px 15px;
+      background: #f8f9fa;
+    }
+    
+    .nav-tab {
+      flex: 1;
+      background: none;
+      border: none;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #6c757d;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border-bottom: 2px solid transparent;
+    }
+    
+    .nav-tab:hover {
+      color: #495057;
+      background: #e9ecef;
+    }
+    
+    .nav-tab.active {
+      color: #4e68f9;
+      border-bottom-color: #4e68f9;
+      background: white;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 20px;
+      color: #6c757d;
+    }
+    
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Canvas Weaver</h1>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-tab="capture">Capture</button>
+    <button class="nav-tab" data-tab="recent">Recent</button>
+    <button class="nav-tab" data-tab="settings">Settings</button>
+  </div>
+
+  <div class="container">
+    <!-- Capture Tab -->
+    <div class="tab-content active" data-tab-content="capture">
+      <!-- Connection Status -->
+      <div class="connection-status" id="connection-status">
+        <div class="status-indicator">
+          <div class="status-dot" id="figma-status-dot"></div>
+          <span id="figma-status-text">Figma Plugin: Checking...</span>
+        </div>
+        <div class="status-indicator">
+          <div class="status-dot" id="server-status-dot"></div>
+          <span id="server-status-text">Server: Checking...</span>
+        </div>
+      </div>
+      
+      <!-- Main Action -->
+      <button id="start-capture" class="main-action">
+        🎯 Start Component Capture
+      </button>
+      
+      <!-- Instructions -->
+      <div class="instructions">
+        <strong>How it works:</strong> Click the button above, then hover and click on any UI component on a webpage to capture it and send it directly to your Figma plugin.
+      </div>
+      
+      <!-- Quick Actions -->
+      <div class="quick-actions">
+        <div class="quick-action" id="capture-fullscreen">
+          <span class="quick-action-icon">🖼️</span>
+          Full Screen
+        </div>
+        <div class="quick-action" id="capture-selection">
+          <span class="quick-action-icon">✂️</span>
+          Selection
+        </div>
+        <div class="quick-action" id="open-figma">
+          <span class="quick-action-icon">🎨</span>
+          Open Figma
+        </div>
+        <div class="quick-action" id="refresh-connection">
+          <span class="quick-action-icon">🔄</span>
+          Refresh
+        </div>
+      </div>
+      
+      <!-- Status and Progress -->
+      <div id="status">Ready to capture components</div>
+      
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <span>Processing...</span>
+      </div>
+      
+      <div class="progress-container" id="progress-container">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      
+      <div class="success-message" id="success-message">
+        ✅ Component sent to Figma successfully!
+      </div>
+    </div>
+
+    <!-- Recent Captures Tab -->
+    <div class="tab-content" data-tab-content="recent">
+      <div class="recent-captures" id="recent-captures">
+        <!-- Recent captures will be populated here -->
+      </div>
+      <div class="empty-state" id="recent-empty" style="display: none;">
+        <div class="empty-state-icon">📸</div>
+        <p>No recent captures</p>
+        <small>Captured components will appear here</small>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" data-tab-content="settings">
+      <div class="settings-panel active">
+        <div class="settings-row">
+          <label class="settings-label">Auto-send to Figma</label>
+          <div class="settings-control">
+            <label class="toggle-switch">
+              <input type="checkbox" id="auto-send-toggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="settings-row">
+          <label class="settings-label">Show notifications</label>
+          <div class="settings-control">
+            <label class="toggle-switch">
+              <input type="checkbox" id="notifications-toggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="settings-row">
+          <label class="settings-label">High quality capture</label>
+          <div class="settings-control">
+            <label class="toggle-switch">
+              <input type="checkbox" id="quality-toggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="settings-row">
+          <label class="settings-label">Capture delay (ms)</label>
+          <div class="settings-control">
+            <input type="number" id="capture-delay" value="500" min="0" max="5000" 
+                   style="width: 60px; padding: 4px; border: 1px solid #dee2e6; border-radius: 4px;">
+          </div>
+        </div>
+        
+        <div class="settings-row">
+          <button class="capture-action" id="clear-history">Clear History</button>
+          <button class="capture-action" id="export-settings">Export Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Transform any UI into editable Figma components
+    </div>
+  </div>
+
+  <!-- Only include scripts that actually exist in the extension directory -->
+  <script src="popup.js"></script>
+</body>
+</html>

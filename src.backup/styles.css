@@ -1,0 +1,318 @@
+/* Plugin UI Styles */
+.plugin-container {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #333;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.tab {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  color: #777;
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: #333;
+}
+
+.tab.active {
+  color: #18a0fb;
+  border-bottom: 2px solid #18a0fb;
+}
+
+/* Tab Content */
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+/* Import Method Selector */
+.import-method-selector {
+  margin-bottom: 16px;
+}
+
+.import-options {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.option-button {
+  padding: 6px 16px;
+  margin: 0 4px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  background-color: #f5f5f5;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.option-button:hover {
+  background-color: #eaeaea;
+}
+
+.option-button.active {
+  background-color: #18a0fb;
+  border-color: #18a0fb;
+  color: white;
+}
+
+/* JSON Preview */
+.json-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  text-align: center;
+}
+
+.json-icon {
+  font-size: 24px;
+  color: #4caf50;
+  margin-bottom: 8px;
+}
+
+.json-preview .image-preview {
+  max-width: 100%;
+  max-height: 200px;
+  margin-top: 16px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Upload Area */
+.upload-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 16px 0;
+  flex-grow: 1;
+}
+
+.upload-label {
+  width: 100%;
+  min-height: 200px;
+  border: 2px dashed #e5e5e5;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  overflow: hidden;
+  position: relative;
+}
+
+.upload-label:hover {
+  border-color: #18a0fb;
+}
+
+.upload-icon {
+  font-size: 32px;
+  color: #18a0fb;
+  margin-bottom: 8px;
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.file-input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.image-preview {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+}
+
+/* Buttons */
+.button-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  gap: 8px;
+}
+
+.button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.primary {
+  background: #18a0fb;
+  color: white;
+}
+
+.primary:hover:not(:disabled) {
+  background: #0d8edf;
+}
+
+.button.secondary {
+  background-color: #f5f5f5;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.button.secondary:hover {
+  background-color: #eaeaea;
+}
+
+.button.accent {
+  background-color: #4caf50;
+  color: white;
+  border: none;
+}
+
+.button.accent:hover {
+  background-color: #45a049;
+}
+
+.button.accent:disabled {
+  background-color: #a5d6a7;
+  cursor: not-allowed;
+}
+
+/* Messages */
+.error-message {
+  background: #fff3f3;
+  color: #d32f2f;
+  border: 1px solid #ffcaca;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 16px 0 8px;
+  font-size: 13px;
+}
+
+.status-message {
+  background: #ecf8f0;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 16px 0 8px;
+  font-size: 13px;
+}
+
+/* Settings */
+.settings-container {
+  padding: 16px 0;
+}
+
+.settings-label {
+  display: flex;
+  flex-direction: column;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.api-input {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
+  font-size: 14px;
+  width: 100%;
+}
+
+.api-input:focus {
+  border-color: #18a0fb;
+  outline: none;
+}
+
+.save-button {
+  margin-top: 8px;
+}
+
+.api-instructions {
+  margin-top: 24px;
+  font-size: 13px;
+}
+
+.api-instructions h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.api-instructions ol {
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.api-instructions a {
+  color: #18a0fb;
+  text-decoration: none;
+}
+
+.api-instructions a:hover {
+  text-decoration: underline;
+}
+
+/* Help */
+.help-container {
+  padding: 0 8px;
+  line-height: 1.5;
+}
+
+.help-container h3 {
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.help-container h4 {
+  font-size: 14px;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.help-container p {
+  margin-bottom: 12px;
+}
+
+.help-container ul, 
+.help-container ol {
+  padding-left: 20px;
+  margin-bottom: 12px;
+}
+
+.help-container li {
+  margin-bottom: 4px;
+}

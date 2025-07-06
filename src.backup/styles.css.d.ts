@@ -1,0 +1,33 @@
+declare const styles: {
+  readonly "plugin-container": string;
+  readonly "tabs": string;
+  readonly "tab": string;
+  readonly "active": string;
+  readonly "tab-content": string;
+  readonly "import-method-selector": string;
+  readonly "import-options": string;
+  readonly "option-button": string;
+  readonly "json-preview": string;
+  readonly "json-icon": string;
+  readonly "image-preview": string;
+  readonly "upload-container": string;
+  readonly "upload-label": string;
+  readonly "upload-icon": string;
+  readonly "upload-hint": string;
+  readonly "file-input": string;
+  readonly "button-row": string;
+  readonly "button": string;
+  readonly "primary": string;
+  readonly "secondary": string;
+  readonly "accent": string;
+  readonly "error-message": string;
+  readonly "status-message": string;
+  readonly "settings-container": string;
+  readonly "settings-label": string;
+  readonly "api-input": string;
+  readonly "save-button": string;
+  readonly "api-instructions": string;
+  readonly "help-container": string;
+};
+export = styles;
+
