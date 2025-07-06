@@ -53,21 +53,46 @@ def run_sam_inference(image_rgb, checkpoint=None):
     from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    default_checkpoints = [
-        "sam_vit_h_4b8939.pth",
-        "/models/sam_vit_h_4b8939.pth",
-        checkpoint
-    ] if checkpoint else ["sam_vit_h_4b8939.pth"]
-
-    checkpoint_file = next((p for p in default_checkpoints if Path(p).exists()), None)
+    
+    # Enhanced checkpoint search with better fallback paths
+    potential_checkpoints = [
+        checkpoint,  # User-provided checkpoint
+        "models/sam_vit_h_4b8939.pth",  # Preferred location
+        "sam_vit_h_4b8939.pth",  # Root directory
+        "checkpoints/sam_vit_h_4b8939.pth",  # Alternative location
+        "/models/sam_vit_h_4b8939.pth",  # Absolute path
+    ]
+    
+    checkpoint_file = None
+    for potential_path in potential_checkpoints:
+        if potential_path and Path(potential_path).exists():
+            checkpoint_file = potential_path
+            break
+    
     if not checkpoint_file:
-        raise FileNotFoundError("SAM checkpoint not found.")
+        raise FileNotFoundError(
+            "SAM checkpoint not found. Please download it using:\n"
+            "bash scripts/download_sam_checkpoint.sh\n"
+            "Or manually download from: https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
+        )
 
+    print(f"Using SAM checkpoint: {checkpoint_file}", file=sys.stderr)
+    
     model_type = "vit_h"
     sam = sam_model_registry[model_type](checkpoint=checkpoint_file)
-    sam.to(device='cuda' if torch.cuda.is_available() else 'cpu')
+    sam.to(device=device)
 
-    mask_generator = SamAutomaticMaskGenerator(sam)
+    # Configure mask generator with optimized parameters for UI elements
+    mask_generator = SamAutomaticMaskGenerator(
+        sam,
+        points_per_side=32,  # Increase for better detail
+        pred_iou_thresh=0.88,  # Higher threshold for better quality
+        stability_score_thresh=0.95,  # Higher stability requirement
+        crop_n_layers=1,
+        crop_n_points_downscale_factor=2,
+        min_mask_region_area=100,  # Filter out small noise
+    )
+    
     masks = mask_generator.generate(image_rgb)
     return masks
 
@@ -80,7 +105,7 @@ def process_masks(masks):
         stability_score = mask_data.get('stability_score', 0.0)
         predicted_iou = mask_data.get('predicted_iou', 0.0)
 
-        segmentation_polygons = extract_polygons_from_mask(mask)
+        segmentation_polygons = extract_polygons(mask)
 
         processed_mask = {
             "id": i,
@@ -91,7 +116,7 @@ def process_masks(masks):
                 "height": int(bbox[3])
             },
             "area": area,
-            "segmentation": segmentation,
+            "segmentation": segmentation_polygons,
             "stability_score": stability_score,
             "predicted_iou": predicted_iou
         }
@@ -116,12 +141,13 @@ def main():
         check_dependencies()
         image_rgb = load_image(args.image_path)
         masks = run_sam_inference(image_rgb=image_rgb, checkpoint=args.checkpoint)
+        processed_masks = process_masks(masks)
         output_data = {
             "success": True,
             "image_path": args.image_path,
             "image_dimensions": {"width": image_rgb.shape[1], "height": image_rgb.shape[0]},
-            "masks": masks,
-            "total_masks": len(masks)
+            "masks": processed_masks,
+            "total_masks": len(processed_masks)
         }
         output_json = json.dumps(output_data, indent=2)
         print(output_json)

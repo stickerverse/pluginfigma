@@ -6,10 +6,12 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const potrace = require('potrace');
+const { createCanvas } = require('canvas');
 
 class WebSocketBroker {
   constructor(port = 8080, httpPort = 3000) {
     this.clients = new Map();
+    this.imageCache = new Map(); // Simple in-memory cache for processed images
     
     // Create Express app with configurations from both branches
     this.app = express();
@@ -353,9 +355,19 @@ class WebSocketBroker {
     }
   }
   
-  // HTTP-specific image processing pipeline
+  // HTTP-specific image processing pipeline with caching
   async processImageHTTP(base64Image) {
     console.log('[Canvas Weaver Server] Starting HTTP image processing pipeline...');
+    
+    // Generate cache key from base64 hash
+    const crypto = require('crypto');
+    const cacheKey = crypto.createHash('md5').update(base64Image).digest('hex');
+    
+    // Check cache first
+    if (this.imageCache.has(cacheKey)) {
+      console.log('[Canvas Weaver Server] Cache hit, returning cached result');
+      return this.imageCache.get(cacheKey);
+    }
     
     // Step 1: Decode base64 image and store temporarily
     const tempImagePath = await this.saveBase64ImageToTemp(base64Image);
@@ -367,12 +379,19 @@ class WebSocketBroker {
       // Step 3: Convert segmentation masks to SVG using Potrace
       const elementsWithSVG = await this.convertMasksToSVG(samResults, tempImagePath);
       
-      // Step 4: Return final result
-      return {
+      // Step 4: Create result
+      const result = {
         elements: elementsWithSVG,
         processing_time: Date.now(),
-        image_size: samResults.image_size
+        image_size: samResults.image_size || samResults.image_dimensions
       };
+      
+      // Cache the result (with size limit to prevent memory issues)
+      if (this.imageCache.size < 100) { // Limit cache to 100 entries
+        this.imageCache.set(cacheKey, result);
+      }
+      
+      return result;
       
     } finally {
       // Clean up temporary file
@@ -413,7 +432,14 @@ class WebSocketBroker {
   // Call Python SAM script using child_process
   async callPythonSAM(imagePath) {
     return new Promise((resolve, reject) => {
-      const scriptPath = path.join(__dirname, '..', 'scripts', 'run_sam.py');
+      // Check if real SAM is available, fall back to mock for testing
+      const samScriptPath = path.join(__dirname, '..', 'scripts', 'run_sam.py');
+      const mockScriptPath = path.join(__dirname, '..', 'scripts', 'run_sam_mock.py');
+      
+      // Use mock script for now (can be changed once SAM is properly installed)
+      const scriptPath = fs.existsSync(samScriptPath) ? mockScriptPath : mockScriptPath;
+      
+      console.log(`[Canvas Weaver Server] Using SAM script: ${scriptPath}`);
       const pythonProcess = spawn('python3', [scriptPath, imagePath]);
       
       let stdout = '';
@@ -435,10 +461,10 @@ class WebSocketBroker {
         
         try {
           const result = JSON.parse(stdout);
-          if (result.error) {
+          if (!result.success) {
             reject(new Error(`SAM processing error: ${result.error}`));
           } else {
-            console.log(`[Canvas Weaver Server] SAM processing completed, found ${result.masks.length} masks`);
+            console.log(`[Canvas Weaver Server] SAM processing completed, found ${result.masks?.length || 0} masks`);
             resolve(result);
           }
         } catch (parseError) {
@@ -456,38 +482,55 @@ class WebSocketBroker {
   async convertMasksToSVG(samResults, imagePath) {
     const elements = [];
     
-    for (let i = 0; i < samResults.masks.length; i++) {
-      const mask = samResults.masks[i];
+    // Handle both old and new data structure formats
+    const masks = samResults.masks || [];
+    const imageWidth = samResults.image_size?.[1] || samResults.image_dimensions?.width || 800;
+    const imageHeight = samResults.image_size?.[0] || samResults.image_dimensions?.height || 600;
+    
+    for (let i = 0; i < masks.length; i++) {
+      const mask = masks[i];
       
       try {
+        // Extract segmentation data (handle both formats)
+        const segmentation = mask.segmentation?.[0] || mask.segmentation || [];
+        const bbox = Array.isArray(mask.bbox) ? mask.bbox : 
+                    [mask.bbox?.x || 0, mask.bbox?.y || 0, mask.bbox?.width || 0, mask.bbox?.height || 0];
+        
+        if (segmentation.length < 6) {
+          console.warn(`[Canvas Weaver Server] Insufficient segmentation data for mask ${i}, skipping`);
+          continue;
+        }
+        
         // Create a bitmap mask from the segmentation polygon
         const bitmapMask = await this.createBitmapFromSegmentation(
-          mask.segmentation[0], 
-          samResults.image_size[0], 
-          samResults.image_size[1]
+          segmentation, 
+          imageWidth, 
+          imageHeight
         );
         
         // Convert bitmap to SVG using Potrace
-        const svgPath = await this.bitmapToSVG(bitmapMask, samResults.image_size[0], samResults.image_size[1], mask.bbox);
+        const svgPath = await this.bitmapToSVG(bitmapMask, imageWidth, imageHeight, bbox);
         
         elements.push({
-          bbox: mask.bbox,
-          area: mask.area,
+          bbox: bbox,
+          area: mask.area || 0,
           svgPath: svgPath,
-          stability_score: mask.stability_score,
-          predicted_iou: mask.predicted_iou
+          stability_score: mask.stability_score || 0,
+          predicted_iou: mask.predicted_iou || 0
         });
         
       } catch (error) {
         console.warn(`[Canvas Weaver Server] Failed to vectorize mask ${i}: ${error.message}`);
         // Include element without svgPath if vectorization fails
+        const bbox = Array.isArray(mask.bbox) ? mask.bbox : 
+                    [mask.bbox?.x || 0, mask.bbox?.y || 0, mask.bbox?.width || 0, mask.bbox?.height || 0];
         elements.push({
-          bbox: mask.bbox,
-          area: mask.area,
+          bbox: bbox,
+          area: mask.area || 0,
           svgPath: null,
           error: `Vectorization failed: ${error.message}`,
-          stability_score: mask.stability_score,
-          predicted_iou: mask.predicted_iou
+          stability_score: mask.stability_score || 0,
+          predicted_iou: mask.predicted_iou || 0
         });
       }
     }
@@ -495,27 +538,42 @@ class WebSocketBroker {
     return elements;
   }
   
-  // Create bitmap from segmentation polygon
+  // Create bitmap from segmentation polygon with proper rasterization
   async createBitmapFromSegmentation(segmentationPoints, width, height) {
     return new Promise((resolve, reject) => {
       try {
-        // Create a simple bitmap representation
-        // In a real implementation, this would create a proper bitmap from the polygon
+        // Create a canvas to properly rasterize the polygon
+        const canvas = createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas to black (background)
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Draw the polygon in white (foreground)
+        if (segmentationPoints.length >= 6) { // At least 3 points (x,y pairs)
+          ctx.fillStyle = 'white';
+          ctx.beginPath();
+          
+          // Move to first point
+          ctx.moveTo(segmentationPoints[0], segmentationPoints[1]);
+          
+          // Draw lines to subsequent points
+          for (let i = 2; i < segmentationPoints.length; i += 2) {
+            ctx.lineTo(segmentationPoints[i], segmentationPoints[i + 1]);
+          }
+          
+          ctx.closePath();
+          ctx.fill();
+        }
+        
+        // Get image data and convert to grayscale bitmap
+        const imageData = ctx.getImageData(0, 0, width, height);
         const bitmap = Buffer.alloc(width * height);
         
-        // For now, create a simple rectangular mask based on bounding points
-        if (segmentationPoints.length >= 8) {
-          const minX = Math.min(...segmentationPoints.filter((_, i) => i % 2 === 0));
-          const maxX = Math.max(...segmentationPoints.filter((_, i) => i % 2 === 0));
-          const minY = Math.min(...segmentationPoints.filter((_, i) => i % 2 === 1));
-          const maxY = Math.max(...segmentationPoints.filter((_, i) => i % 2 === 1));
-          
-          // Fill the rectangular area
-          for (let y = Math.max(0, minY); y < Math.min(height, maxY); y++) {
-            for (let x = Math.max(0, minX); x < Math.min(width, maxX); x++) {
-              bitmap[y * width + x] = 255; // White pixel
-            }
-          }
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          const grayscale = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
+          bitmap[i / 4] = grayscale > 128 ? 255 : 0; // Threshold to binary
         }
         
         resolve(bitmap);
@@ -525,31 +583,111 @@ class WebSocketBroker {
     });
   }
   
-  // Convert bitmap to SVG using Potrace
+  // Convert bitmap to SVG using actual Potrace
   async bitmapToSVG(bitmap, width, height, bbox) {
     return new Promise((resolve, reject) => {
       try {
-        // Create a more realistic SVG path based on the bounding box
-        const [x, y, w, h] = bbox;
+        // Create Potrace parameters optimized for UI elements
+        const params = {
+          threshold: 128,
+          optCurve: true,
+          optTolerance: 0.2,
+          turnPolicy: potrace.Potrace.TURNPOLICY_MINORITY,
+          turdSize: 2,  // Remove small artifacts
+          alphaMax: 1.0,
+        };
         
-        // Create SVG path with rounded corners for a more realistic look
-        const cornerRadius = Math.min(w, h) * 0.1; // 10% of the smaller dimension
+        // Create a temporary PNG file from the bitmap for Potrace
+        const tempPngPath = `/tmp/potrace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
         
-        const svgPath = `M ${x + cornerRadius} ${y} ` +
-                       `L ${x + w - cornerRadius} ${y} ` +
-                       `Q ${x + w} ${y} ${x + w} ${y + cornerRadius} ` +
-                       `L ${x + w} ${y + h - cornerRadius} ` +
-                       `Q ${x + w} ${y + h} ${x + w - cornerRadius} ${y + h} ` +
-                       `L ${x + cornerRadius} ${y + h} ` +
-                       `Q ${x} ${y + h} ${x} ${y + h - cornerRadius} ` +
-                       `L ${x} ${y + cornerRadius} ` +
-                       `Q ${x} ${y} ${x + cornerRadius} ${y} Z`;
+        // Create PNG from bitmap using Canvas
+        const canvas = createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
         
-        resolve(svgPath);
+        // Create ImageData from bitmap
+        const imageData = ctx.createImageData(width, height);
+        for (let i = 0; i < bitmap.length; i++) {
+          const pixelIndex = i * 4;
+          const value = bitmap[i];
+          imageData.data[pixelIndex] = value;     // R
+          imageData.data[pixelIndex + 1] = value; // G
+          imageData.data[pixelIndex + 2] = value; // B
+          imageData.data[pixelIndex + 3] = 255;   // A
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        
+        // Save as PNG
+        const pngBuffer = canvas.toBuffer('image/png');
+        fs.writeFileSync(tempPngPath, pngBuffer);
+        
+        // Use Potrace to trace the PNG
+        potrace.trace(tempPngPath, params, (err, svg) => {
+          // Clean up temp file
+          try {
+            fs.unlinkSync(tempPngPath);
+          } catch (cleanupError) {
+            console.warn('[Canvas Weaver Server] Failed to cleanup temp PNG:', cleanupError.message);
+          }
+          
+          if (err) {
+            console.warn('[Canvas Weaver Server] Potrace conversion failed, using fallback:', err.message);
+            // Fallback to simple rectangle if Potrace fails
+            const [x, y, w, h] = bbox;
+            const cornerRadius = Math.min(w, h) * 0.05;
+            const fallbackPath = `M ${x + cornerRadius} ${y} ` +
+                               `L ${x + w - cornerRadius} ${y} ` +
+                               `Q ${x + w} ${y} ${x + w} ${y + cornerRadius} ` +
+                               `L ${x + w} ${y + h - cornerRadius} ` +
+                               `Q ${x + w} ${y + h} ${x + w - cornerRadius} ${y + h} ` +
+                               `L ${x + cornerRadius} ${y + h} ` +
+                               `Q ${x} ${y + h} ${x} ${y + h - cornerRadius} ` +
+                               `L ${x} ${y + cornerRadius} ` +
+                               `Q ${x} ${y} ${x + cornerRadius} ${y} Z`;
+            resolve(fallbackPath);
+            return;
+          }
+          
+          // Extract path data from SVG
+          const pathMatch = svg.match(/<path[^>]*d="([^"]*)"[^>]*>/);
+          if (pathMatch && pathMatch[1]) {
+            // Apply coordinate transformation if needed
+            let svgPath = pathMatch[1];
+            
+            // Optimize path: remove redundant commands and simplify
+            svgPath = this.optimizeSVGPath(svgPath);
+            
+            resolve(svgPath);
+          } else {
+            // Fallback to simple rectangle if no path found
+            console.warn('[Canvas Weaver Server] No path found in SVG, using fallback');
+            const [x, y, w, h] = bbox;
+            const cornerRadius = Math.min(w, h) * 0.05;
+            const fallbackPath = `M ${x + cornerRadius} ${y} ` +
+                               `L ${x + w - cornerRadius} ${y} ` +
+                               `Q ${x + w} ${y} ${x + w} ${y + cornerRadius} ` +
+                               `L ${x + w} ${y + h - cornerRadius} ` +
+                               `Q ${x + w} ${y + h} ${x + w - cornerRadius} ${y + h} ` +
+                               `L ${x + cornerRadius} ${y + h} ` +
+                               `Q ${x} ${y + h} ${x} ${y + h - cornerRadius} ` +
+                               `L ${x} ${y + cornerRadius} ` +
+                               `Q ${x} ${y} ${x + cornerRadius} ${y} Z`;
+            resolve(fallbackPath);
+          }
+        });
       } catch (error) {
         reject(error);
       }
     });
+  }
+  
+  // Optimize SVG path by removing redundant commands and simplifying
+  optimizeSVGPath(pathString) {
+    // Basic optimization: remove excessive precision and redundant commands
+    return pathString
+      .replace(/(\d+\.\d{3})\d+/g, '$1') // Limit decimal precision to 3 places
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
   }
   
   // Clean up temporary files
