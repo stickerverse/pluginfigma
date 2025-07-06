@@ -30,3 +30,17 @@ build/
 *.sublime-project
 .DS_Store
 Thumbs.db
+
+# Python cache and dependencies
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SAM model checkpoint files (large files)
+models/
+checkpoints/
+*.pth
+
+# Temporary files
+/tmp/
+*.tmp

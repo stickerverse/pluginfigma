@@ -432,15 +432,12 @@ class WebSocketBroker {
   // Call Python SAM script using child_process
   async callPythonSAM(imagePath) {
     return new Promise((resolve, reject) => {
-      // Check if real SAM is available, fall back to mock for testing
       const samScriptPath = path.join(__dirname, '..', 'scripts', 'run_sam.py');
       const mockScriptPath = path.join(__dirname, '..', 'scripts', 'run_sam_mock.py');
       
-      // Use mock script for now (can be changed once SAM is properly installed)
-      const scriptPath = fs.existsSync(samScriptPath) ? mockScriptPath : mockScriptPath;
-      
-      console.log(`[Canvas Weaver Server] Using SAM script: ${scriptPath}`);
-      const pythonProcess = spawn('python3', [scriptPath, imagePath]);
+      // Try production SAM first, fall back to mock if dependencies not available
+      console.log(`[Canvas Weaver Server] Attempting production SAM script: ${samScriptPath}`);
+      const pythonProcess = spawn('python3', [samScriptPath, imagePath]);
       
       let stdout = '';
       let stderr = '';
@@ -455,25 +452,76 @@ class WebSocketBroker {
       
       pythonProcess.on('close', (code) => {
         if (code !== 0) {
-          reject(new Error(`Python SAM script failed: ${stderr}`));
+          console.warn(`[Canvas Weaver Server] Production SAM failed: ${stderr}`);
+          console.log(`[Canvas Weaver Server] Falling back to mock SAM script: ${mockScriptPath}`);
+          
+          // Fallback to mock script
+          this.callPythonSAMMock(imagePath).then(resolve).catch(reject);
           return;
         }
         
         try {
           const result = JSON.parse(stdout);
           if (!result.success) {
-            reject(new Error(`SAM processing error: ${result.error}`));
+            console.warn(`[Canvas Weaver Server] Production SAM error: ${result.error}`);
+            console.log(`[Canvas Weaver Server] Falling back to mock SAM script: ${mockScriptPath}`);
+            this.callPythonSAMMock(imagePath).then(resolve).catch(reject);
           } else {
-            console.log(`[Canvas Weaver Server] SAM processing completed, found ${result.masks?.length || 0} masks`);
+            console.log(`[Canvas Weaver Server] Production SAM completed, found ${result.masks?.length || 0} masks`);
             resolve(result);
           }
         } catch (parseError) {
-          reject(new Error(`Failed to parse SAM output: ${parseError.message}`));
+          console.warn(`[Canvas Weaver Server] Failed to parse production SAM output: ${parseError.message}`);
+          this.callPythonSAMMock(imagePath).then(resolve).catch(reject);
         }
       });
       
       pythonProcess.on('error', (error) => {
-        reject(new Error(`Failed to start Python process: ${error.message}`));
+        console.warn(`[Canvas Weaver Server] Failed to start production SAM: ${error.message}`);
+        this.callPythonSAMMock(imagePath).then(resolve).catch(reject);
+      });
+    });
+  }
+  
+  // Fallback mock SAM implementation
+  async callPythonSAMMock(imagePath) {
+    return new Promise((resolve, reject) => {
+      const mockScriptPath = path.join(__dirname, '..', 'scripts', 'run_sam_mock.py');
+      console.log(`[Canvas Weaver Server] Using mock SAM script: ${mockScriptPath}`);
+      const pythonProcess = spawn('python3', [mockScriptPath, imagePath]);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Mock SAM script failed: ${stderr}`));
+          return;
+        }
+        
+        try {
+          const result = JSON.parse(stdout);
+          if (!result.success) {
+            reject(new Error(`Mock SAM processing error: ${result.error}`));
+          } else {
+            console.log(`[Canvas Weaver Server] Mock SAM completed, found ${result.masks?.length || 0} masks`);
+            resolve(result);
+          }
+        } catch (parseError) {
+          reject(new Error(`Failed to parse mock SAM output: ${parseError.message}`));
+        }
+      });
+      
+      pythonProcess.on('error', (error) => {
+        reject(new Error(`Failed to start mock SAM process: ${error.message}`));
       });
     });
   }
@@ -588,14 +636,7 @@ class WebSocketBroker {
     return new Promise((resolve, reject) => {
       try {
         // Create Potrace parameters optimized for UI elements
-        const params = {
-          threshold: 128,
-          optCurve: true,
-          optTolerance: 0.2,
-          turnPolicy: potrace.Potrace.TURNPOLICY_MINORITY,
-          turdSize: 2,  // Remove small artifacts
-          alphaMax: 1.0,
-        };
+        const params = this.getPotraceParams(bbox, 'ui');
         
         // Create a temporary PNG file from the bitmap for Potrace
         const tempPngPath = `/tmp/potrace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
@@ -684,10 +725,58 @@ class WebSocketBroker {
   // Optimize SVG path by removing redundant commands and simplifying
   optimizeSVGPath(pathString) {
     // Basic optimization: remove excessive precision and redundant commands
-    return pathString
+    let optimized = pathString
       .replace(/(\d+\.\d{3})\d+/g, '$1') // Limit decimal precision to 3 places
       .replace(/\s+/g, ' ') // Normalize whitespace
+      .replace(/([MLHVCSQTAZ])\s+/gi, '$1') // Remove space after commands
+      .replace(/(\d+)\s+(\d+)/g, '$1,$2') // Use commas between coordinates
       .trim();
+    
+    // Additional optimizations for path simplification
+    // Remove redundant moveto commands
+    optimized = optimized.replace(/M\s*([^MLHVCSQTAZ]*)\s*L\s*\1/gi, 'M$1');
+    
+    // Combine consecutive same commands
+    optimized = optimized.replace(/([MLHVCSQTAZ])\s*([^MLHVCSQTAZ]*)\s*\1\s*/gi, '$1$2 ');
+    
+    return optimized;
+  }
+  
+  // Get optimized Potrace parameters based on element type
+  getPotraceParams(bbox, elementType = 'ui') {
+    const [x, y, w, h] = bbox;
+    const area = w * h;
+    
+    // Adjust parameters based on element size and type
+    let params = {
+      threshold: 128,
+      optCurve: true,
+      optTolerance: 0.2,
+      turnPolicy: potrace.Potrace.TURNPOLICY_MINORITY,
+      turdSize: 2,
+      alphaMax: 1.0,
+    };
+    
+    // Fine-tune for different element sizes
+    if (area < 500) {
+      // Small elements (icons, buttons)
+      params.threshold = 140;
+      params.optTolerance = 0.1;
+      params.turdSize = 1;
+    } else if (area > 5000) {
+      // Large elements (backgrounds, containers)
+      params.threshold = 120;
+      params.optTolerance = 0.3;
+      params.turdSize = 4;
+    }
+    
+    // UI-specific optimizations
+    if (elementType === 'ui') {
+      params.turnPolicy = potrace.Potrace.TURNPOLICY_BLACK; // Better for UI elements
+      params.alphaMax = 0.8; // Slightly smoother curves for UI
+    }
+    
+    return params;
   }
   
   // Clean up temporary files
