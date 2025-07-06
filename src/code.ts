@@ -379,9 +379,11 @@ async function performClientSideOCR(base64: string): Promise<TextBlock[]> {
     const Tesseract = await import('tesseract.js');
     
     // Perform OCR on the base64 image
-    const { data: { words } } = await Tesseract.recognize(base64, 'eng', {
+    const result = await Tesseract.recognize(base64, 'eng', {
       logger: m => console.log('[Tesseract]', m)
     });
+    
+    const words = result.data.words || [];
     
     console.log('[Canvas Weaver] OCR analysis complete, found', words.length, 'words');
     
