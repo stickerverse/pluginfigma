@@ -68,7 +68,11 @@ function Plugin() {
       
       // Perform OCR with optimized settings for UI text
       const { data } = await tesseractWorker.recognize(imageData.base64, {
-        rectangles: undefined, // Let Tesseract find all text regions
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            console.log(`[Canvas Weaver UI] OCR Progress: ${Math.round(m.progress * 100)}%`);
+          }
+        }
       });
 
       console.log('[Canvas Weaver UI] OCR completed, found', data.words.length, 'words');

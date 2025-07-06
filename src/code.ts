@@ -617,16 +617,17 @@ async function performOCR(imageData: {
 // Helper function to convert Uint8Array to base64
 async function convertUint8ArrayToBase64(data: Uint8Array): Promise<string> {
   try {
-    // Create blob from Uint8Array
-    const blob = new Blob([data]);
+    // Convert Uint8Array to binary string
+    let binaryString = '';
+    for (let i = 0; i < data.length; i++) {
+      binaryString += String.fromCharCode(data[i]);
+    }
     
-    // Create data URL
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed to convert to base64'));
-      reader.readAsDataURL(blob);
-    });
+    // Convert to base64 
+    const base64 = btoa(binaryString);
+    
+    // Add data URL prefix for images
+    return `data:image/png;base64,${base64}`;
   } catch (error) {
     throw new Error('Failed to convert image data to base64');
   }
@@ -652,72 +653,6 @@ function performFallbackTextDetection(imageData: {
   }
   
   return textBlocks;
-}
-
-// Merge nearby text blocks into coherent text elements
-function mergeNearbyTextBlocks(textBlocks: TextBlock[]): TextBlock[] {
-  if (textBlocks.length <= 1) return textBlocks;
-  
-  const merged: TextBlock[] = [];
-  const processed = new Set<number>();
-  
-  for (let i = 0; i < textBlocks.length; i++) {
-    if (processed.has(i)) continue;
-    
-    const currentBlock = textBlocks[i];
-    const mergeGroup = [currentBlock];
-    processed.add(i);
-    
-    // Find nearby blocks to merge
-    for (let j = i + 1; j < textBlocks.length; j++) {
-      if (processed.has(j)) continue;
-      
-      const otherBlock = textBlocks[j];
-      
-      // Check if blocks are on the same line (similar y-coordinates)
-      const currentCenterY = (currentBlock.bbox.y0 + currentBlock.bbox.y1) / 2;
-      const otherCenterY = (otherBlock.bbox.y0 + otherBlock.bbox.y1) / 2;
-      const heightThreshold = Math.max(
-        currentBlock.bbox.y1 - currentBlock.bbox.y0,
-        otherBlock.bbox.y1 - otherBlock.bbox.y0
-      ) * 0.5;
-      
-      // Check horizontal distance
-      const horizontalGap = Math.min(
-        Math.abs(currentBlock.bbox.x1 - otherBlock.bbox.x0),
-        Math.abs(otherBlock.bbox.x1 - currentBlock.bbox.x0)
-      );
-      
-      if (Math.abs(currentCenterY - otherCenterY) <= heightThreshold && horizontalGap <= 50) {
-        mergeGroup.push(otherBlock);
-        processed.add(j);
-      }
-    }
-    
-    // Merge the group
-    if (mergeGroup.length === 1) {
-      merged.push(currentBlock);
-    } else {
-      // Sort by x-coordinate and merge
-      mergeGroup.sort((a, b) => a.bbox.x0 - b.bbox.x0);
-      
-      const mergedText = mergeGroup.map(block => block.text).join(' ');
-      const avgConfidence = mergeGroup.reduce((sum, block) => sum + block.confidence, 0) / mergeGroup.length;
-      
-      const minX = Math.min(...mergeGroup.map(b => b.bbox.x0));
-      const minY = Math.min(...mergeGroup.map(b => b.bbox.y0));
-      const maxX = Math.max(...mergeGroup.map(b => b.bbox.x1));
-      const maxY = Math.max(...mergeGroup.map(b => b.bbox.y1));
-      
-      merged.push({
-        text: mergedText,
-        confidence: avgConfidence,
-        bbox: { x0: minX, y0: minY, x1: maxX, y1: maxY }
-      });
-    }
-  }
-  
-  return merged;
 }
 
 // Detect potential text regions using simple heuristics
