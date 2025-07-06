@@ -140,9 +140,30 @@ interface TextBlock {
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
-// Main message handler - refactored for async component generation
+// Main message handler - refactored for async component generation and OCR coordination
 figma.ui.onmessage = async (msg) => {
   console.log('[Canvas Weaver] Received message:', msg.type);
+  
+  // Handle OCR result from UI
+  if (msg.type === 'ocrResult') {
+    const { operationId, success, result, error } = msg;
+    
+    if (pendingOcrOperations.has(operationId)) {
+      const operation = pendingOcrOperations.get(operationId)!;
+      pendingOcrOperations.delete(operationId);
+      
+      if (success) {
+        console.log('[Canvas Weaver] OCR operation', operationId, 'completed successfully with', result?.length || 0, 'text blocks');
+        figma.notify('📝 OCR text recognition completed!', { timeout: 2000 });
+        operation.resolve(result);
+      } else {
+        console.error('[Canvas Weaver] OCR operation', operationId, 'failed:', error);
+        figma.notify('⚠️ OCR failed, using fallback detection', { timeout: 3000 });
+        operation.reject(new Error(error || 'OCR operation failed'));
+      }
+    }
+    return;
+  }
   
   // Handle component generation from image
   if (msg.type === 'generateComponentFromImage') {
@@ -402,47 +423,26 @@ async function convertServerVectorsToFigmaLayers(serverVectors: any[]): Promise<
   return vectorLayers;
 }
 
-// Perform client-side OCR using Tesseract.js
+// Perform client-side OCR using Tesseract.js (via UI)
 async function performClientSideOCR(base64: string): Promise<TextBlock[]> {
   try {
-    console.log('[Canvas Weaver] Starting client-side OCR...');
+    console.log('[Canvas Weaver] Starting client-side OCR via UI...');
     
-    // Import Tesseract dynamically (Figma environment compatibility)
-    const Tesseract = await import('tesseract.js');
+    // Convert base64 to image data for the UI OCR system
+    const imageData = await decodeBase64ToImageData(base64);
     
-    // Perform OCR on the base64 image
-    const result = await Tesseract.recognize(base64, 'eng', {
-      logger: m => console.log('[Tesseract]', m)
-    });
+    // Use the existing UI-based OCR system instead of direct import
+    const textBlocks = await performOCR(imageData);
     
-    const words = result.data.words || [];
-    
-    console.log('[Canvas Weaver] OCR analysis complete, found', words.length, 'words');
-    
-    // Convert Tesseract results to TextBlock format
-    const textBlocks: TextBlock[] = [];
-    
-    for (const word of words) {
-      if (word.confidence > 50 && word.text.trim().length > 0) { // Filter low-confidence results
-        textBlocks.push({
-          text: word.text,
-          confidence: word.confidence / 100, // Convert to 0-1 scale
-          bbox: {
-            x0: word.bbox.x0,
-            y0: word.bbox.y0,
-            x1: word.bbox.x1,
-            y1: word.bbox.y1
-          }
-        });
-      }
-    }
+    console.log('[Canvas Weaver] Client-side OCR completed, found', textBlocks.length, 'text blocks');
     
     return textBlocks;
     
   } catch (error) {
     console.error('[Canvas Weaver] Client-side OCR failed:', error);
-    // Fallback to simplified text detection
-    return await performOCR(await decodeBase64ToImageData(base64));
+    // Fallback to heuristic text detection
+    const imageData = await decodeBase64ToImageData(base64);
+    return performFallbackTextDetection(imageData);
   }
 }
 
@@ -860,14 +860,16 @@ function detectTextRegions(imageData: {
   return regions;
 }
 
-// Step D: Assemble all layers into final component
+// Step D: Assemble all layers into final component (assembleLayers function)
 async function assembleComponent(
   vectorLayers: VectorLayer[],
   textBlocks: TextBlock[],
   width: number,
   height: number
 ): Promise<FrameNode> {
-  // Create parent frame
+  figma.notify('🔧 Assembling component layers...', { timeout: 2000 });
+  
+  // Create parent frame with proper setup
   const parentFrame = figma.createFrame();
   parentFrame.name = 'Generated Component';
   parentFrame.resize(width, height);
@@ -875,80 +877,316 @@ async function assembleComponent(
   // Remove default fills
   parentFrame.fills = [];
   
-  // Add vector layers
-  for (let i = 0; i < vectorLayers.length; i++) {
-    const vectorLayer = vectorLayers[i];
-    const vectorNode = await createVectorFromPath(vectorLayer);
-    vectorNode.name = `Vector Layer ${i + 1}`;
-    parentFrame.appendChild(vectorNode);
+  console.log('[Canvas Weaver] Assembling', vectorLayers.length, 'vector layers and', textBlocks.length, 'text blocks');
+  
+  // Smart grouping: Group related elements by proximity and layer type
+  const groupedElements = await createSmartGroups(vectorLayers, textBlocks, width, height);
+  
+  // Add grouped elements to parent frame
+  for (const group of groupedElements) {
+    parentFrame.appendChild(group);
   }
   
-  // Add text layers
-  for (let i = 0; i < textBlocks.length; i++) {
-    const textBlock = textBlocks[i];
-    const textNode = await createTextFromBlock(textBlock);
-    textNode.name = `Text ${i + 1}`;
-    parentFrame.appendChild(textNode);
-  }
+  // Apply intelligent auto-layout based on element positions and relationships
+  await applyAdvancedAutoLayout(parentFrame, groupedElements);
   
-  // Apply auto-layout based on layer positions
-  applyIntelligentAutoLayout(parentFrame);
+  // Apply component-level styling with proper semantic structure
+  await applyComponentStyling(parentFrame);
   
-  // Add styling
-  parentFrame.cornerRadius = 8;
-  parentFrame.clipsContent = true;
-  parentFrame.layoutMode = 'NONE'; // Will be set by auto-layout analysis
+  figma.notify('✅ Component assembly complete!', { timeout: 2000 });
   
   return parentFrame;
 }
 
-// Create vector node from path data
-async function createVectorFromPath(vectorLayer: VectorLayer): Promise<VectorNode> {
+// Smart grouping logic for related elements
+async function createSmartGroups(
+  vectorLayers: VectorLayer[],
+  textBlocks: TextBlock[],
+  width: number,
+  height: number
+): Promise<SceneNode[]> {
+  const groupedElements: SceneNode[] = [];
+  const processedVectors = new Set<number>();
+  const processedTexts = new Set<number>();
+  
+  console.log('[Canvas Weaver] Creating smart groups for', vectorLayers.length, 'vectors and', textBlocks.length, 'texts');
+  
+  // Create vector elements from SVG paths with enhanced styling
+  const vectorNodes = await Promise.all(
+    vectorLayers.map(async (vectorLayer, index) => {
+      const vectorNode = await createEnhancedVectorFromPath(vectorLayer, index);
+      return { node: vectorNode, layer: vectorLayer, index };
+    })
+  );
+  
+  // Create text elements with proper styling and font detection
+  const textNodes = await Promise.all(
+    textBlocks.map(async (textBlock, index) => {
+      const textNode = await createEnhancedTextFromBlock(textBlock, index);
+      return { node: textNode, block: textBlock, index };
+    })
+  );
+  
+  // Group 1: Card-like components (background + content)
+  const cardGroups = await createCardGroups(vectorNodes, textNodes, processedVectors, processedTexts);
+  groupedElements.push(...cardGroups);
+  
+  // Group 2: Button-like components (small vectors with text)
+  const buttonGroups = await createButtonGroups(vectorNodes, textNodes, processedVectors, processedTexts);
+  groupedElements.push(...buttonGroups);
+  
+  // Group 3: List items (horizontally aligned elements)
+  const listGroups = await createListItemGroups(vectorNodes, textNodes, processedVectors, processedTexts);
+  groupedElements.push(...listGroups);
+  
+  // Add remaining ungrouped elements
+  for (const { node, index } of vectorNodes) {
+    if (!processedVectors.has(index)) {
+      groupedElements.push(node);
+    }
+  }
+  
+  for (const { node, index } of textNodes) {
+    if (!processedTexts.has(index)) {
+      groupedElements.push(node);
+    }
+  }
+  
+  console.log('[Canvas Weaver] Created', groupedElements.length, 'grouped elements');
+  return groupedElements;
+}
+// Create enhanced vector node from path data with proper SVG processing
+async function createEnhancedVectorFromPath(vectorLayer: VectorLayer, index: number): Promise<VectorNode> {
   const vector = figma.createVector();
+  vector.name = `Vector ${index + 1}`;
   
-  // Set vector data from SVG path
-  vector.vectorPaths = [{
-    windingRule: 'EVENODD',
-    data: vectorLayer.paths
-  }];
-  
-  // Apply fill
-  vector.fills = [{
-    type: 'SOLID',
-    color: vectorLayer.color
-  }];
-  
-  // Position and size
-  vector.x = vectorLayer.bounds.x;
-  vector.y = vectorLayer.bounds.y;
-  vector.resize(vectorLayer.bounds.width, vectorLayer.bounds.height);
+  try {
+    // Set vector data from SVG path with proper validation
+    if (vectorLayer.paths && vectorLayer.paths.trim()) {
+      vector.vectorPaths = [{
+        windingRule: 'EVENODD',
+        data: vectorLayer.paths
+      }];
+    } else {
+      // Create a fallback rectangle path if SVG path is invalid
+      const { x, y, width, height } = vectorLayer.bounds;
+      vector.vectorPaths = [{
+        windingRule: 'EVENODD',
+        data: `M ${x} ${y} L ${x + width} ${y} L ${x + width} ${y + height} L ${x} ${y + height} Z`
+      }];
+    }
+    
+    // Apply enhanced fill with proper color handling
+    const color = vectorLayer.color || { r: 0.8, g: 0.8, b: 0.8 };
+    vector.fills = [{
+      type: 'SOLID',
+      color: {
+        r: Math.max(0, Math.min(1, color.r)),
+        g: Math.max(0, Math.min(1, color.g)),
+        b: Math.max(0, Math.min(1, color.b))
+      }
+    }];
+    
+    // Position and size with bounds validation
+    const bounds = vectorLayer.bounds;
+    vector.x = Math.max(0, bounds.x);
+    vector.y = Math.max(0, bounds.y);
+    
+    if (bounds.width > 0 && bounds.height > 0) {
+      vector.resize(Math.max(1, bounds.width), Math.max(1, bounds.height));
+    }
+    
+    // Add semantic naming based on size and position
+    if (bounds.width > 200 || bounds.height > 200) {
+      vector.name = `Background ${index + 1}`;
+    } else if (bounds.width < 50 && bounds.height < 50) {
+      vector.name = `Icon ${index + 1}`;
+    }
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] Error creating vector:', error);
+    // Create minimal fallback vector
+    vector.fills = [{ type: 'SOLID', color: { r: 0.9, g: 0.9, b: 0.9 } }];
+  }
   
   return vector;
 }
 
-// Create text node from OCR block
-async function createTextFromBlock(textBlock: TextBlock): Promise<TextNode> {
+// Create vector node from path data (legacy function for compatibility)
+async function createVectorFromPath(vectorLayer: VectorLayer): Promise<VectorNode> {
+  return createEnhancedVectorFromPath(vectorLayer, 0);
+}
+
+// Create enhanced text node from OCR block with proper font detection and styling
+async function createEnhancedTextFromBlock(textBlock: TextBlock, index: number): Promise<TextNode> {
   const text = figma.createText();
+  text.name = `Text ${index + 1}`;
   
-  // Load font
-  await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-  
-  // Set text properties
-  text.fontName = { family: "Inter", style: "Regular" };
-  text.characters = textBlock.text;
-  text.fontSize = estimateFontSizeFromBounds(textBlock.bbox);
-  
-  // Position
-  text.x = textBlock.bbox.x0;
-  text.y = textBlock.bbox.y0;
-  
-  // Style
-  text.fills = [{ type: 'SOLID', color: { r: 0.1, g: 0.1, b: 0.1 } }];
+  try {
+    // Advanced font detection based on text characteristics
+    const fontInfo = await detectOptimalFont(textBlock);
+    
+    // Load the detected font with fallbacks
+    try {
+      await figma.loadFontAsync(fontInfo);
+      text.fontName = fontInfo;
+    } catch (fontError) {
+      // Fallback to Inter Regular
+      await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+      text.fontName = { family: "Inter", style: "Regular" };
+      console.warn('[Canvas Weaver] Font loading failed, using fallback:', fontError);
+    }
+    
+    // Set text content with proper trimming
+    text.characters = textBlock.text.trim() || 'Text';
+    
+    // Enhanced font size estimation with context awareness
+    text.fontSize = estimateEnhancedFontSize(textBlock);
+    
+    // Position with proper bounds validation
+    text.x = Math.max(0, textBlock.bbox.x0);
+    text.y = Math.max(0, textBlock.bbox.y0);
+    
+    // Advanced text styling based on context and size
+    const textStyle = determineTextStyle(textBlock, index);
+    text.fills = [textStyle.fill];
+    
+    // Apply text-specific properties
+    if (textStyle.letterSpacing) {
+      text.letterSpacing = textStyle.letterSpacing;
+    }
+    
+    if (textStyle.lineHeight) {
+      text.lineHeight = textStyle.lineHeight;
+    }
+    
+    // Semantic naming based on text characteristics
+    if (text.fontSize > 24) {
+      text.name = `Heading ${index + 1}`;
+    } else if (text.fontSize > 16) {
+      text.name = `Subheading ${index + 1}`;
+    } else {
+      text.name = `Body Text ${index + 1}`;
+    }
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] Error creating text node:', error);
+    // Create minimal fallback text
+    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+    text.fontName = { family: "Inter", style: "Regular" };
+    text.characters = textBlock.text.trim() || 'Text';
+    text.fontSize = 14;
+    text.fills = [{ type: 'SOLID', color: { r: 0.1, g: 0.1, b: 0.1 } }];
+  }
   
   return text;
 }
 
-// Estimate font size based on bounding box
+// Create text node from OCR block (legacy function for compatibility)
+async function createTextFromBlock(textBlock: TextBlock): Promise<TextNode> {
+  return createEnhancedTextFromBlock(textBlock, 0);
+}
+
+// Advanced font detection based on text characteristics
+async function detectOptimalFont(textBlock: TextBlock): Promise<FontName> {
+  const textHeight = textBlock.bbox.y1 - textBlock.bbox.y0;
+  const textWidth = textBlock.bbox.x1 - textBlock.bbox.x0;
+  const aspectRatio = textWidth / textHeight;
+  
+  // Analyze text characteristics for font selection
+  const text = textBlock.text.toLowerCase();
+  const hasNumbers = /\d/.test(text);
+  const hasSpecialChars = /[!@#$%^&*(),.?":{}|<>]/.test(text);
+  const isAllCaps = textBlock.text === textBlock.text.toUpperCase();
+  
+  // Font selection logic based on context
+  if (textHeight > 24) {
+    // Large text - likely headers
+    if (isAllCaps || hasSpecialChars) {
+      return { family: "Inter", style: "Bold" };
+    }
+    return { family: "Inter", style: "SemiBold" };
+  } else if (textHeight > 16) {
+    // Medium text - likely subheaders
+    return { family: "Inter", style: "Medium" };
+  } else if (hasNumbers && aspectRatio > 3) {
+    // Likely numeric/code content
+    return { family: "Inter", style: "Regular" };
+  } else {
+    // Body text
+    return { family: "Inter", style: "Regular" };
+  }
+}
+
+// Enhanced font size estimation with context awareness
+function estimateEnhancedFontSize(textBlock: TextBlock): number {
+  const height = textBlock.bbox.y1 - textBlock.bbox.y0;
+  const width = textBlock.bbox.x1 - textBlock.bbox.x0;
+  
+  // Base calculation with improved accuracy
+  let fontSize = Math.max(8, Math.min(72, height * 0.8));
+  
+  // Adjust based on text characteristics
+  const charCount = textBlock.text.length;
+  const avgCharWidth = charCount > 0 ? width / charCount : 10;
+  
+  // Consider character density for better estimation
+  if (avgCharWidth < 6) {
+    fontSize = Math.max(10, fontSize * 0.9); // Condensed text
+  } else if (avgCharWidth > 15) {
+    fontSize = Math.min(48, fontSize * 1.1); // Wide text
+  }
+  
+  // Confidence-based adjustment
+  if (textBlock.confidence < 0.7) {
+    fontSize = Math.max(12, fontSize); // Ensure minimum readability
+  }
+  
+  return Math.round(fontSize);
+}
+
+// Determine text style based on context and characteristics
+function determineTextStyle(textBlock: TextBlock, index: number): {
+  fill: SolidPaint;
+  letterSpacing?: LetterSpacing;
+  lineHeight?: LineHeight;
+} {
+  const fontSize = estimateEnhancedFontSize(textBlock);
+  const isLargeText = fontSize > 20;
+  const isSmallText = fontSize < 14;
+  
+  // Color determination based on context
+  let color = { r: 0.1, g: 0.1, b: 0.1 }; // Default dark text
+  
+  if (isLargeText) {
+    // Headers - darker and more prominent
+    color = { r: 0.05, g: 0.05, b: 0.05 };
+  } else if (isSmallText) {
+    // Small text - slightly lighter for better readability
+    color = { r: 0.3, g: 0.3, b: 0.3 };
+  }
+  
+  const style: {
+    fill: SolidPaint;
+    letterSpacing?: LetterSpacing;
+    lineHeight?: LineHeight;
+  } = {
+    fill: { type: 'SOLID', color }
+  };
+  
+  // Letter spacing for better readability
+  if (isLargeText) {
+    style.letterSpacing = { value: -0.5, unit: 'PERCENT' };
+  } else if (isSmallText) {
+    style.letterSpacing = { value: 0.5, unit: 'PERCENT' };
+  }
+  
+  // Line height for better typography
+  style.lineHeight = { value: 1.4, unit: 'PERCENT' };
+  
+  return style;
+}
+// Estimate font size based on bounding box (legacy function for compatibility)
 function estimateFontSizeFromBounds(bbox: {
   x0: number;
   y0: number;
@@ -959,7 +1197,563 @@ function estimateFontSizeFromBounds(bbox: {
   return Math.max(12, Math.min(48, height * 0.7));
 }
 
-// Apply intelligent auto-layout based on layer positions
+// Create card-like component groups (background + content)
+async function createCardGroups(
+  vectorNodes: Array<{ node: VectorNode; layer: VectorLayer; index: number }>,
+  textNodes: Array<{ node: TextNode; block: TextBlock; index: number }>,
+  processedVectors: Set<number>,
+  processedTexts: Set<number>
+): Promise<FrameNode[]> {
+  const cardGroups: FrameNode[] = [];
+  
+  // Find large background vectors that could be cards
+  const backgroundVectors = vectorNodes.filter(({ layer, index }) => {
+    if (processedVectors.has(index)) return false;
+    const { width, height } = layer.bounds;
+    return width > 100 && height > 60; // Minimum card size
+  });
+  
+  for (const { node: backgroundNode, layer: backgroundLayer, index: bgIndex } of backgroundVectors) {
+    // Find text elements that are within or near this background
+    const relatedTexts = textNodes.filter(({ block, index }) => {
+      if (processedTexts.has(index)) return false;
+      
+      const textCenterX = (block.bbox.x0 + block.bbox.x1) / 2;
+      const textCenterY = (block.bbox.y0 + block.bbox.y1) / 2;
+      
+      // Check if text is within or near the background bounds
+      const bg = backgroundLayer.bounds;
+      const margin = 20; // Allow some margin for text near the background
+      
+      return textCenterX >= bg.x - margin &&
+             textCenterX <= bg.x + bg.width + margin &&
+             textCenterY >= bg.y - margin &&
+             textCenterY <= bg.y + bg.height + margin;
+    });
+    
+    if (relatedTexts.length > 0) {
+      // Create card group
+      const cardFrame = figma.createFrame();
+      cardFrame.name = `Card ${cardGroups.length + 1}`;
+      
+      // Set frame bounds to encompass all elements
+      const allBounds = [
+        backgroundLayer.bounds,
+        ...relatedTexts.map(({ block }) => ({
+          x: block.bbox.x0,
+          y: block.bbox.y0,
+          width: block.bbox.x1 - block.bbox.x0,
+          height: block.bbox.y1 - block.bbox.y0
+        }))
+      ];
+      
+      const minX = Math.min(...allBounds.map(b => b.x));
+      const minY = Math.min(...allBounds.map(b => b.y));
+      const maxX = Math.max(...allBounds.map(b => b.x + b.width));
+      const maxY = Math.max(...allBounds.map(b => b.y + b.height));
+      
+      cardFrame.x = minX;
+      cardFrame.y = minY;
+      cardFrame.resize(maxX - minX, maxY - minY);
+      cardFrame.fills = [];
+      
+      // Add background
+      backgroundNode.x -= minX;
+      backgroundNode.y -= minY;
+      cardFrame.appendChild(backgroundNode);
+      
+      // Add related texts
+      for (const { node: textNode, index: textIndex } of relatedTexts) {
+        textNode.x -= minX;
+        textNode.y -= minY;
+        cardFrame.appendChild(textNode);
+        processedTexts.add(textIndex);
+      }
+      
+      processedVectors.add(bgIndex);
+      cardGroups.push(cardFrame);
+    }
+  }
+  
+  return cardGroups;
+}
+
+// Create button-like component groups (small vectors with text)
+async function createButtonGroups(
+  vectorNodes: Array<{ node: VectorNode; layer: VectorLayer; index: number }>,
+  textNodes: Array<{ node: TextNode; block: TextBlock; index: number }>,
+  processedVectors: Set<number>,
+  processedTexts: Set<number>
+): Promise<FrameNode[]> {
+  const buttonGroups: FrameNode[] = [];
+  
+  // Find small/medium vectors that could be buttons
+  const buttonVectors = vectorNodes.filter(({ layer, index }) => {
+    if (processedVectors.has(index)) return false;
+    const { width, height } = layer.bounds;
+    return width >= 60 && width <= 200 && height >= 20 && height <= 60;
+  });
+  
+  for (const { node: buttonNode, layer: buttonLayer, index: btnIndex } of buttonVectors) {
+    // Find text that's centered on this vector
+    const relatedText = textNodes.find(({ block, index }) => {
+      if (processedTexts.has(index)) return false;
+      
+      const textCenterX = (block.bbox.x0 + block.bbox.x1) / 2;
+      const textCenterY = (block.bbox.y0 + block.bbox.y1) / 2;
+      const bg = buttonLayer.bounds;
+      const bgCenterX = bg.x + bg.width / 2;
+      const bgCenterY = bg.y + bg.height / 2;
+      
+      // Check if text is centered on the button
+      const centerThreshold = Math.min(bg.width, bg.height) / 3;
+      
+      return Math.abs(textCenterX - bgCenterX) < centerThreshold &&
+             Math.abs(textCenterY - bgCenterY) < centerThreshold;
+    });
+    
+    if (relatedText) {
+      // Create button group
+      const buttonFrame = figma.createFrame();
+      buttonFrame.name = `Button ${buttonGroups.length + 1}`;
+      
+      // Set frame to button bounds
+      buttonFrame.x = buttonLayer.bounds.x;
+      buttonFrame.y = buttonLayer.bounds.y;
+      buttonFrame.resize(buttonLayer.bounds.width, buttonLayer.bounds.height);
+      buttonFrame.fills = [];
+      
+      // Add button background
+      buttonNode.x = 0;
+      buttonNode.y = 0;
+      buttonFrame.appendChild(buttonNode);
+      
+      // Center text on button
+      const textNode = relatedText.node;
+      textNode.x = (buttonLayer.bounds.width - (relatedText.block.bbox.x1 - relatedText.block.bbox.x0)) / 2;
+      textNode.y = (buttonLayer.bounds.height - (relatedText.block.bbox.y1 - relatedText.block.bbox.y0)) / 2;
+      buttonFrame.appendChild(textNode);
+      
+      processedVectors.add(btnIndex);
+      processedTexts.add(relatedText.index);
+      buttonGroups.push(buttonFrame);
+    }
+  }
+  
+  return buttonGroups;
+}
+
+// Create list item groups (horizontally aligned elements)
+async function createListItemGroups(
+  vectorNodes: Array<{ node: VectorNode; layer: VectorLayer; index: number }>,
+  textNodes: Array<{ node: TextNode; block: TextBlock; index: number }>,
+  processedVectors: Set<number>,
+  processedTexts: Set<number>
+): Promise<FrameNode[]> {
+  const listGroups: FrameNode[] = [];
+  
+  // Group texts by similar Y positions (potential list items)
+  const textsByRow: Array<Array<{ node: TextNode; block: TextBlock; index: number }>> = [];
+  const rowThreshold = 10; // Pixels tolerance for same row
+  
+  for (const textItem of textNodes) {
+    if (processedTexts.has(textItem.index)) continue;
+    
+    const textY = (textItem.block.bbox.y0 + textItem.block.bbox.y1) / 2;
+    
+    // Find existing row or create new one
+    let foundRow = false;
+    for (const row of textsByRow) {
+      const rowY = (row[0].block.bbox.y0 + row[0].block.bbox.y1) / 2;
+      if (Math.abs(textY - rowY) < rowThreshold) {
+        row.push(textItem);
+        foundRow = true;
+        break;
+      }
+    }
+    
+    if (!foundRow) {
+      textsByRow.push([textItem]);
+    }
+  }
+  
+  // Create list items for rows with multiple texts
+  for (const row of textsByRow) {
+    if (row.length >= 2) {
+      // Sort by X position
+      row.sort((a, b) => a.block.bbox.x0 - b.block.bbox.x0);
+      
+      // Find any small vectors (icons) in this row
+      const rowY = (row[0].block.bbox.y0 + row[0].block.bbox.y1) / 2;
+      const rowVectors = vectorNodes.filter(({ layer, index }) => {
+        if (processedVectors.has(index)) return false;
+        const vectorY = layer.bounds.y + layer.bounds.height / 2;
+        const { width, height } = layer.bounds;
+        return Math.abs(vectorY - rowY) < rowThreshold * 2 && 
+               width < 50 && height < 50; // Small icons
+      });
+      
+      // Create list item frame
+      const listFrame = figma.createFrame();
+      listFrame.name = `List Item ${listGroups.length + 1}`;
+      
+      // Calculate bounds
+      const allElements = [...row.map(r => r.block.bbox), ...rowVectors.map(v => v.layer.bounds)];
+      const minX = Math.min(...allElements.map(b => 'x0' in b ? b.x0 : b.x));
+      const minY = Math.min(...allElements.map(b => 'y0' in b ? b.y0 : b.y));
+      const maxX = Math.max(...allElements.map(b => 'x1' in b ? b.x1 : b.x + b.width));
+      const maxY = Math.max(...allElements.map(b => 'y1' in b ? b.y1 : b.y + b.height));
+      
+      listFrame.x = minX;
+      listFrame.y = minY;
+      listFrame.resize(maxX - minX, maxY - minY);
+      listFrame.fills = [];
+      listFrame.layoutMode = 'HORIZONTAL';
+      listFrame.itemSpacing = 8;
+      listFrame.paddingLeft = 8;
+      listFrame.paddingRight = 8;
+      listFrame.counterAxisAlignItems = 'CENTER';
+      
+      // Add vectors (icons)
+      for (const { node: vectorNode, index: vectorIndex } of rowVectors) {
+        vectorNode.x = 0;
+        vectorNode.y = 0;
+        listFrame.appendChild(vectorNode);
+        processedVectors.add(vectorIndex);
+      }
+      
+      // Add texts
+      for (const { node: textNode, index: textIndex } of row) {
+        textNode.x = 0;
+        textNode.y = 0;
+        listFrame.appendChild(textNode);
+        processedTexts.add(textIndex);
+      }
+      
+      listGroups.push(listFrame);
+    }
+  }
+  
+  return listGroups;
+}
+
+// Apply advanced auto-layout with better detection algorithms
+async function applyAdvancedAutoLayout(parentFrame: FrameNode, groupedElements: SceneNode[]): Promise<void> {
+  if (groupedElements.length < 2) return;
+  
+  console.log('[Canvas Weaver] Applying advanced auto-layout to', groupedElements.length, 'elements');
+  
+  // Analyze element positions and relationships
+  const elementPositions = groupedElements.map(element => ({
+    element,
+    x: element.x,
+    y: element.y,
+    width: element.width,
+    height: element.height,
+    centerX: element.x + element.width / 2,
+    centerY: element.y + element.height / 2
+  }));
+  
+  // Advanced layout detection with multiple algorithms
+  const layoutAnalysis = {
+    isVertical: detectAdvancedVerticalLayout(elementPositions),
+    isHorizontal: detectAdvancedHorizontalLayout(elementPositions),
+    isGrid: detectGridLayout(elementPositions),
+    isCentered: detectCenteredLayout(elementPositions)
+  };
+  
+  console.log('[Canvas Weaver] Layout analysis:', layoutAnalysis);
+  
+  // Apply the most appropriate layout
+  if (layoutAnalysis.isGrid) {
+    applyGridLayout(parentFrame, elementPositions);
+  } else if (layoutAnalysis.isVertical && !layoutAnalysis.isHorizontal) {
+    applyVerticalLayout(parentFrame, elementPositions);
+  } else if (layoutAnalysis.isHorizontal && !layoutAnalysis.isVertical) {
+    applyHorizontalLayout(parentFrame, elementPositions);
+  } else if (layoutAnalysis.isCentered) {
+    applyCenteredLayout(parentFrame, elementPositions);
+  } else {
+    // Free-form layout - apply basic spacing optimization
+    applyFreeFormLayout(parentFrame, elementPositions);
+  }
+}
+
+// Advanced vertical layout detection
+function detectAdvancedVerticalLayout(positions: Array<{
+  element: SceneNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}>): boolean {
+  if (positions.length < 2) return false;
+  
+  // Sort by Y position
+  const sortedByY = [...positions].sort((a, b) => a.y - b.y);
+  
+  let verticalAlignedCount = 0;
+  let consistentSpacing = true;
+  let spacings: number[] = [];
+  
+  for (let i = 1; i < sortedByY.length; i++) {
+    const prev = sortedByY[i - 1];
+    const curr = sortedByY[i];
+    
+    // Check X alignment (allowing some tolerance)
+    const xAlignmentTolerance = 30;
+    if (Math.abs(prev.centerX - curr.centerX) < xAlignmentTolerance) {
+      verticalAlignedCount++;
+    }
+    
+    // Check spacing consistency
+    const spacing = curr.y - (prev.y + prev.height);
+    spacings.push(spacing);
+  }
+  
+  // Check spacing consistency
+  if (spacings.length > 1) {
+    const avgSpacing = spacings.reduce((a, b) => a + b, 0) / spacings.length;
+    const spacingVariance = spacings.reduce((sum, spacing) => sum + Math.abs(spacing - avgSpacing), 0) / spacings.length;
+    consistentSpacing = spacingVariance < 20; // 20px tolerance
+  }
+  
+  const alignmentRatio = verticalAlignedCount / (positions.length - 1);
+  return alignmentRatio > 0.6 && consistentSpacing;
+}
+
+// Advanced horizontal layout detection
+function detectAdvancedHorizontalLayout(positions: Array<{
+  element: SceneNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}>): boolean {
+  if (positions.length < 2) return false;
+  
+  // Sort by X position
+  const sortedByX = [...positions].sort((a, b) => a.x - b.x);
+  
+  let horizontalAlignedCount = 0;
+  let consistentSpacing = true;
+  let spacings: number[] = [];
+  
+  for (let i = 1; i < sortedByX.length; i++) {
+    const prev = sortedByX[i - 1];
+    const curr = sortedByX[i];
+    
+    // Check Y alignment (allowing some tolerance)
+    const yAlignmentTolerance = 30;
+    if (Math.abs(prev.centerY - curr.centerY) < yAlignmentTolerance) {
+      horizontalAlignedCount++;
+    }
+    
+    // Check spacing consistency
+    const spacing = curr.x - (prev.x + prev.width);
+    spacings.push(spacing);
+  }
+  
+  // Check spacing consistency
+  if (spacings.length > 1) {
+    const avgSpacing = spacings.reduce((a, b) => a + b, 0) / spacings.length;
+    const spacingVariance = spacings.reduce((sum, spacing) => sum + Math.abs(spacing - avgSpacing), 0) / spacings.length;
+    consistentSpacing = spacingVariance < 20; // 20px tolerance
+  }
+  
+  const alignmentRatio = horizontalAlignedCount / (positions.length - 1);
+  return alignmentRatio > 0.6 && consistentSpacing;
+}
+
+// Grid layout detection
+function detectGridLayout(positions: Array<{
+  element: SceneNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}>): boolean {
+  if (positions.length < 4) return false;
+  
+  // Group elements by similar Y positions (rows)
+  const rows: Array<Array<typeof positions[0]>> = [];
+  const rowTolerance = 20;
+  
+  for (const pos of positions) {
+    let foundRow = false;
+    for (const row of rows) {
+      if (Math.abs(row[0].centerY - pos.centerY) < rowTolerance) {
+        row.push(pos);
+        foundRow = true;
+        break;
+      }
+    }
+    if (!foundRow) {
+      rows.push([pos]);
+    }
+  }
+  
+  // Check if we have multiple rows with consistent column counts
+  const validRows = rows.filter(row => row.length > 1);
+  if (validRows.length < 2) return false;
+  
+  // Check column consistency
+  const columnCounts = validRows.map(row => row.length);
+  const isConsistentColumns = columnCounts.every(count => count === columnCounts[0]);
+  
+  return isConsistentColumns && validRows.length >= 2;
+}
+
+// Centered layout detection
+function detectCenteredLayout(positions: Array<{
+  element: SceneNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}>): boolean {
+  if (positions.length < 2) return false;
+  
+  // Calculate overall bounds
+  const minX = Math.min(...positions.map(p => p.x));
+  const maxX = Math.max(...positions.map(p => p.x + p.width));
+  const minY = Math.min(...positions.map(p => p.y));
+  const maxY = Math.max(...positions.map(p => p.y + p.height));
+  
+  const containerCenterX = (minX + maxX) / 2;
+  const containerCenterY = (minY + maxY) / 2;
+  
+  // Check how many elements are centered
+  let centeredCount = 0;
+  const centerTolerance = 40;
+  
+  for (const pos of positions) {
+    if (Math.abs(pos.centerX - containerCenterX) < centerTolerance) {
+      centeredCount++;
+    }
+  }
+  
+  return centeredCount / positions.length > 0.7;
+}
+
+// Apply different layout types
+function applyVerticalLayout(parentFrame: FrameNode, positions: Array<{ element: SceneNode }>): void {
+  parentFrame.layoutMode = 'VERTICAL';
+  parentFrame.counterAxisAlignItems = 'CENTER';
+  parentFrame.itemSpacing = calculateOptimalSpacing(positions, 'vertical');
+  parentFrame.paddingTop = 16;
+  parentFrame.paddingBottom = 16;
+  parentFrame.paddingLeft = 16;
+  parentFrame.paddingRight = 16;
+}
+
+function applyHorizontalLayout(parentFrame: FrameNode, positions: Array<{ element: SceneNode }>): void {
+  parentFrame.layoutMode = 'HORIZONTAL';
+  parentFrame.counterAxisAlignItems = 'CENTER';
+  parentFrame.itemSpacing = calculateOptimalSpacing(positions, 'horizontal');
+  parentFrame.paddingTop = 16;
+  parentFrame.paddingBottom = 16;
+  parentFrame.paddingLeft = 16;
+  parentFrame.paddingRight = 16;
+}
+
+function applyGridLayout(parentFrame: FrameNode, positions: Array<{ element: SceneNode }>): void {
+  // For now, use vertical with centered alignment as a grid approximation
+  parentFrame.layoutMode = 'VERTICAL';
+  parentFrame.counterAxisAlignItems = 'CENTER';
+  parentFrame.itemSpacing = 12;
+  parentFrame.paddingTop = 20;
+  parentFrame.paddingBottom = 20;
+  parentFrame.paddingLeft = 20;
+  parentFrame.paddingRight = 20;
+}
+
+function applyCenteredLayout(parentFrame: FrameNode, positions: Array<{ element: SceneNode }>): void {
+  parentFrame.layoutMode = 'VERTICAL';
+  parentFrame.counterAxisAlignItems = 'CENTER';
+  parentFrame.primaryAxisAlignItems = 'CENTER';
+  parentFrame.itemSpacing = 16;
+  parentFrame.paddingTop = 24;
+  parentFrame.paddingBottom = 24;
+  parentFrame.paddingLeft = 24;
+  parentFrame.paddingRight = 24;
+}
+
+function applyFreeFormLayout(parentFrame: FrameNode, positions: Array<{ element: SceneNode }>): void {
+  // Keep absolute positioning but add some padding
+  parentFrame.layoutMode = 'NONE';
+  parentFrame.paddingTop = 8;
+  parentFrame.paddingBottom = 8;
+  parentFrame.paddingLeft = 8;
+  parentFrame.paddingRight = 8;
+}
+
+// Calculate optimal spacing based on element positions
+function calculateOptimalSpacing(positions: Array<{ element: SceneNode }>, direction: 'vertical' | 'horizontal'): number {
+  if (positions.length < 2) return 16;
+  
+  const spacings: number[] = [];
+  const sorted = [...positions].sort((a, b) => 
+    direction === 'vertical' ? a.element.y - b.element.y : a.element.x - b.element.x
+  );
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1].element;
+    const curr = sorted[i].element;
+    
+    const spacing = direction === 'vertical' 
+      ? curr.y - (prev.y + prev.height)
+      : curr.x - (prev.x + prev.width);
+    
+    if (spacing >= 0) {
+      spacings.push(spacing);
+    }
+  }
+  
+  if (spacings.length === 0) return 16;
+  
+  // Use median spacing to avoid outliers
+  spacings.sort((a, b) => a - b);
+  const median = spacings[Math.floor(spacings.length / 2)];
+  
+  // Clamp to reasonable values
+  return Math.max(4, Math.min(32, median));
+}
+
+// Apply component-level styling with proper semantic structure
+async function applyComponentStyling(parentFrame: FrameNode): Promise<void> {
+  // Apply modern component styling
+  parentFrame.cornerRadius = 12;
+  parentFrame.clipsContent = false; // Allow shadows and effects to show
+  
+  // Add subtle shadow for depth
+  parentFrame.effects = [{
+    type: 'DROP_SHADOW',
+    visible: true,
+    color: { r: 0, g: 0, b: 0, a: 0.1 },
+    blendMode: 'NORMAL',
+    offset: { x: 0, y: 2 },
+    radius: 8,
+    spread: 0
+  }];
+  
+  // Add light background if no fill is set
+  if (parentFrame.fills.length === 0) {
+    parentFrame.fills = [{
+      type: 'SOLID',
+      color: { r: 0.99, g: 0.99, b: 0.99 }
+    }];
+  }
+}
+// Apply intelligent auto-layout based on layer positions (legacy function for compatibility)
 function applyIntelligentAutoLayout(frame: FrameNode): void {
   if (frame.children.length < 2) return;
   
