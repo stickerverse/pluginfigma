@@ -344,40 +344,97 @@ async function analyzeAndBuildComponent(base64: string): Promise<FrameNode> {
 
 // Process image with AI server
 async function processImageWithAIServer(base64: string): Promise<any | null> {
-  try {
-    console.log('[Canvas Weaver] Making request to AI server...');
-    
-    const response = await fetch('http://localhost:3000/api/process-image', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        base64: base64,
-        options: {
-          useOCR: true,
-          generateVectors: true
+  const maxRetries = 3;
+  const baseDelay = 1000; // 1 second
+  const timeout = 30000; // 30 seconds
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[Canvas Weaver] Making request to AI server (attempt ${attempt}/${maxRetries})...`);
+      
+      // Show progress indicator
+      if (attempt === 1) {
+        figma.notify('🔗 Connecting to AI server...', { timeout: 2000 });
+      } else {
+        figma.notify(`🔄 Retrying connection (attempt ${attempt}/${maxRetries})...`, { timeout: 2000 });
+      }
+      
+      // Create AbortController for timeout handling
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch('http://localhost:3000/api/process-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          base64Image: base64, // Fixed: server expects 'base64Image', not 'base64'
+          options: {
+            useOCR: true,
+            generateVectors: true
+          }
+        }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        // Handle specific HTTP status codes
+        if (response.status === 404) {
+          throw new Error('AI server endpoint not found - check server is running');
+        } else if (response.status === 500) {
+          throw new Error('Server internal error - processing failed');
+        } else if (response.status === 400) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`Bad request: ${errorData.error || 'Invalid request format'}`);
+        } else {
+          throw new Error(`Server responded with status: ${response.status} ${response.statusText}`);
         }
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
+      }
+      
+      figma.notify('📊 Processing image with AI...', { timeout: 3000 });
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Server processing failed');
+      }
+      
+      console.log('[Canvas Weaver] AI server analysis complete');
+      figma.notify('✅ AI analysis complete!', { timeout: 2000 });
+      return result.data;
+      
+    } catch (error) {
+      console.error(`[Canvas Weaver] AI server request failed (attempt ${attempt}):`, error);
+      
+      // Handle specific error types
+      if (error.name === 'AbortError') {
+        console.log('[Canvas Weaver] Request timed out');
+        figma.notify(`⏱️ Request timed out (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
+      } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        console.log('[Canvas Weaver] Network error - server may not be running');
+        figma.notify(`🔌 Cannot connect to server (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
+      } else {
+        figma.notify(`❌ Server error (attempt ${attempt}/${maxRetries}): ${error.message}`, { timeout: 2000, error: true });
+      }
+      
+      // If this is the last attempt, return null
+      if (attempt === maxRetries) {
+        console.log('[Canvas Weaver] All retry attempts exhausted, falling back to local processing');
+        figma.notify('⚠️ Server unavailable, using local processing...', { timeout: 3000 });
+        return null;
+      }
+      
+      // Wait before retrying with exponential backoff
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.log(`[Canvas Weaver] Waiting ${delay}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-    
-    const result = await response.json();
-    
-    if (!result.success) {
-      throw new Error(result.error || 'Server processing failed');
-    }
-    
-    console.log('[Canvas Weaver] AI server analysis complete');
-    return result.data;
-    
-  } catch (error) {
-    console.error('[Canvas Weaver] AI server request failed:', error);
-    return null;
   }
+  
+  return null;
 }
 
 // Convert server vector data to Figma layers
