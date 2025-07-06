@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "potrace": "^2.1.8",
     "ws": "^8.16.0"
   },
   "devDependencies": {
