@@ -4,34 +4,450 @@
  */
 
 document.addEventListener('DOMContentLoaded', function() {
-  // Get DOM elements
+  // Get DOM elements - Enhanced version
   const startCaptureBtn = document.getElementById('start-capture');
   const statusEl = document.getElementById('status');
   const loadingEl = document.getElementById('loading');
   const progressContainer = document.getElementById('progress-container');
   const progressBar = document.getElementById('progress-bar');
   const successMessage = document.getElementById('success-message');
-  const componentsContainerEl = document.getElementById('components-container');
   
-  // State
+  // Connection status elements
+  const connectionStatusEl = document.getElementById('connection-status');
+  const figmaStatusDot = document.getElementById('figma-status-dot');
+  const figmaStatusText = document.getElementById('figma-status-text');
+  const serverStatusDot = document.getElementById('server-status-dot');
+  const serverStatusText = document.getElementById('server-status-text');
+  
+  // Tab navigation elements
+  const navTabs = document.querySelectorAll('.nav-tab');
+  const tabContents = document.querySelectorAll('.tab-content');
+  
+  // Recent captures elements
+  const recentCapturesEl = document.getElementById('recent-captures');
+  const recentEmptyEl = document.getElementById('recent-empty');
+  
+  // Quick action elements
+  const captureFullscreenBtn = document.getElementById('capture-fullscreen');
+  const captureSelectionBtn = document.getElementById('capture-selection');
+  const openFigmaBtn = document.getElementById('open-figma');
+  const refreshConnectionBtn = document.getElementById('refresh-connection');
+  
+  // Settings elements
+  const autoSendToggle = document.getElementById('auto-send-toggle');
+  const notificationsToggle = document.getElementById('notifications-toggle');
+  const qualityToggle = document.getElementById('quality-toggle');
+  const captureDelayInput = document.getElementById('capture-delay');
+  const clearHistoryBtn = document.getElementById('clear-history');
+  const exportSettingsBtn = document.getElementById('export-settings');
+  
+  // Enhanced State Management
   let capturedComponents = [];
   let componentData = null;
   let clipboardReady = false;
+  let connectionStatus = {
+    figma: false,
+    server: false,
+    lastCheck: Date.now()
+  };
+  let settings = {
+    autoSend: true,
+    showNotifications: true,
+    highQuality: false,
+    captureDelay: 500
+  };
   
-  // Initially show status as initializing
-  statusEl.textContent = "Initializing extension...";
+  // Load settings from storage
+  loadSettings();
   
-  // Event listener for the main capture button
+  // Initialize popup state
+  initializePopup();
+  
+  // Enhanced Event Listeners
+  
+  // Main capture button
   startCaptureBtn.addEventListener('click', function() {
     debugLog('Start capture button clicked');
     startComponentCapture();
   });
   
+  // Tab navigation
+  navTabs.forEach(tab => {
+    tab.addEventListener('click', function() {
+      const tabName = this.dataset.tab;
+      switchToTab(tabName);
+    });
+  });
+  
+  // Quick actions
+  captureFullscreenBtn.addEventListener('click', captureFullscreen);
+  captureSelectionBtn.addEventListener('click', captureSelection);
+  openFigmaBtn.addEventListener('click', openFigma);
+  refreshConnectionBtn.addEventListener('click', refreshConnections);
+  
+  // Settings
+  autoSendToggle.addEventListener('change', function() {
+    settings.autoSend = this.checked;
+    saveSettings();
+  });
+  
+  notificationsToggle.addEventListener('change', function() {
+    settings.showNotifications = this.checked;
+    saveSettings();
+  });
+  
+  qualityToggle.addEventListener('change', function() {
+    settings.highQuality = this.checked;
+    saveSettings();
+  });
+  
+  captureDelayInput.addEventListener('change', function() {
+    settings.captureDelay = parseInt(this.value);
+    saveSettings();
+  });
+  
+  clearHistoryBtn.addEventListener('click', clearCaptureHistory);
+  exportSettingsBtn.addEventListener('click', exportSettings);
+  
   // Listen for messages from content script and background script
   chrome.runtime.onMessage.addListener(handleExtensionMessages);
   
-  // Initialize popup state
-  initializePopup();
+  // Start connection monitoring
+  startConnectionMonitoring();
+
+  /**
+   * Enhanced Settings Management
+   */
+  function loadSettings() {
+    chrome.storage.local.get(['canvasWeaverSettings'], function(result) {
+      if (result.canvasWeaverSettings) {
+        settings = { ...settings, ...result.canvasWeaverSettings };
+        updateSettingsUI();
+      }
+    });
+  }
+  
+  function saveSettings() {
+    chrome.storage.local.set({ canvasWeaverSettings: settings });
+    debugLog('Settings saved:', settings);
+  }
+  
+  function updateSettingsUI() {
+    autoSendToggle.checked = settings.autoSend;
+    notificationsToggle.checked = settings.showNotifications;
+    qualityToggle.checked = settings.highQuality;
+    captureDelayInput.value = settings.captureDelay;
+  }
+
+  /**
+   * Tab Navigation
+   */
+  function switchToTab(tabName) {
+    // Update tab buttons
+    navTabs.forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.tab === tabName);
+    });
+    
+    // Update tab content
+    tabContents.forEach(content => {
+      content.classList.toggle('active', content.dataset.tabContent === tabName);
+    });
+    
+    // Load recent captures when switching to recent tab
+    if (tabName === 'recent') {
+      loadRecentCaptures();
+    }
+  }
+
+  /**
+   * Connection Status Monitoring
+   */
+  function startConnectionMonitoring() {
+    updateConnectionStatus();
+    
+    // Check connection status every 3 seconds
+    setInterval(updateConnectionStatus, 3000);
+  }
+  
+  function updateConnectionStatus() {
+    // Check Figma plugin connection
+    chrome.tabs.query({url: "*://*.figma.com/*"}, function(figmaTabs) {
+      const hasFigmaTab = figmaTabs.length > 0;
+      
+      if (hasFigmaTab) {
+        // Check if plugin is actually running
+        checkFigmaPlugin(figmaTabs[0].id);
+      } else {
+        updateConnectionUI('figma', false, 'No Figma tab open');
+      }
+    });
+    
+    // Check server connection (simplified - could ping actual server)
+    const now = Date.now();
+    const serverConnected = now - connectionStatus.lastCheck < 30000; // Assume connected if recent activity
+    updateConnectionUI('server', serverConnected, serverConnected ? 'Server online' : 'Server offline');
+  }
+  
+  function checkFigmaPlugin(tabId) {
+    chrome.tabs.sendMessage(tabId, {
+      action: 'CHECK_FIGMA_PLUGIN_READY',
+      source: 'sticker-chrome-extension'
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        updateConnectionUI('figma', false, 'Plugin not detected');
+      } else if (response && response.ready) {
+        updateConnectionUI('figma', true, 'Plugin ready');
+        connectionStatus.figma = true;
+      } else {
+        updateConnectionUI('figma', false, 'Plugin not ready');
+      }
+    });
+  }
+  
+  function updateConnectionUI(type, connected, message) {
+    const dot = type === 'figma' ? figmaStatusDot : serverStatusDot;
+    const text = type === 'figma' ? figmaStatusText : serverStatusText;
+    
+    dot.className = `status-dot ${connected ? 'connected' : 'disconnected'}`;
+    text.textContent = `${type === 'figma' ? 'Figma Plugin' : 'Server'}: ${message}`;
+    
+    // Update overall connection status
+    connectionStatus[type] = connected;
+    const overallConnected = connectionStatus.figma || connectionStatus.server;
+    
+    connectionStatusEl.className = `connection-status ${overallConnected ? 'connected' : 'disconnected'}`;
+  }
+
+  /**
+   * Quick Actions
+   */
+  function captureFullscreen() {
+    statusEl.textContent = "Capturing full screen...";
+    showLoading();
+    
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.captureVisibleTab(null, {format: 'png'}, function(dataUrl) {
+        if (chrome.runtime.lastError) {
+          statusEl.textContent = "Error capturing screen";
+          hideLoading();
+          return;
+        }
+        
+        processCapture({
+          type: 'fullscreen',
+          dataUrl: dataUrl,
+          timestamp: Date.now()
+        });
+      });
+    });
+  }
+  
+  function captureSelection() {
+    statusEl.textContent = "Click and drag to select area...";
+    // This would typically trigger a selection mode in the content script
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.sendMessage(tabs[0].id, {action: "START_SELECTION_CAPTURE"});
+    });
+    window.close();
+  }
+  
+  function openFigma() {
+    chrome.tabs.query({url: "*://*.figma.com/*"}, function(figmaTabs) {
+      if (figmaTabs.length > 0) {
+        chrome.tabs.update(figmaTabs[0].id, {active: true});
+      } else {
+        chrome.tabs.create({url: 'https://figma.com'});
+      }
+    });
+  }
+  
+  function refreshConnections() {
+    statusEl.textContent = "Refreshing connections...";
+    connectionStatus = { figma: false, server: false, lastCheck: Date.now() };
+    updateConnectionStatus();
+    
+    setTimeout(() => {
+      statusEl.textContent = "Connections refreshed";
+    }, 2000);
+  }
+
+  /**
+   * Recent Captures Management
+   */
+  function loadRecentCaptures() {
+    chrome.storage.local.get(['recentCaptures'], function(result) {
+      const captures = result.recentCaptures || [];
+      displayRecentCaptures(captures);
+    });
+  }
+  
+  function displayRecentCaptures(captures) {
+    if (captures.length === 0) {
+      recentCapturesEl.style.display = 'none';
+      recentEmptyEl.style.display = 'block';
+      return;
+    }
+    
+    recentCapturesEl.style.display = 'block';
+    recentEmptyEl.style.display = 'none';
+    
+    recentCapturesEl.innerHTML = '';
+    
+    captures.slice(0, 10).forEach((capture, index) => {
+      const item = createCaptureItem(capture, index);
+      recentCapturesEl.appendChild(item);
+    });
+  }
+  
+  function createCaptureItem(capture, index) {
+    const item = document.createElement('div');
+    item.className = 'capture-item';
+    
+    const thumbnail = document.createElement('img');
+    thumbnail.className = 'capture-thumbnail';
+    thumbnail.src = capture.thumbnail || capture.dataUrl;
+    thumbnail.alt = capture.name || `Capture ${index + 1}`;
+    
+    const info = document.createElement('div');
+    info.className = 'capture-info';
+    
+    const name = document.createElement('p');
+    name.className = 'capture-name';
+    name.textContent = capture.name || `Capture ${index + 1}`;
+    
+    const time = document.createElement('p');
+    time.className = 'capture-time';
+    time.textContent = new Date(capture.timestamp).toLocaleString();
+    
+    info.appendChild(name);
+    info.appendChild(time);
+    
+    const actions = document.createElement('div');
+    actions.className = 'capture-actions';
+    
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'capture-action primary';
+    sendBtn.textContent = 'Send';
+    sendBtn.onclick = () => sendCaptureToFigma(capture);
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'capture-action';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.onclick = () => deleteCapture(capture.id);
+    
+    actions.appendChild(sendBtn);
+    actions.appendChild(deleteBtn);
+    
+    item.appendChild(thumbnail);
+    item.appendChild(info);
+    item.appendChild(actions);
+    
+    return item;
+  }
+  
+  function processCapture(captureData) {
+    // Add unique ID and save to recent captures
+    captureData.id = Date.now().toString();
+    captureData.thumbnail = captureData.dataUrl; // For now, use full image as thumbnail
+    
+    saveToRecentCaptures(captureData);
+    
+    if (settings.autoSend) {
+      sendCaptureToFigma(captureData);
+    } else {
+      statusEl.textContent = "Capture saved! Switch to Recent tab to send to Figma.";
+      hideLoading();
+    }
+  }
+  
+  function saveToRecentCaptures(capture) {
+    chrome.storage.local.get(['recentCaptures'], function(result) {
+      const captures = result.recentCaptures || [];
+      captures.unshift(capture);
+      
+      // Keep only last 50 captures
+      const trimmedCaptures = captures.slice(0, 50);
+      
+      chrome.storage.local.set({ recentCaptures: trimmedCaptures });
+    });
+  }
+  
+  function sendCaptureToFigma(capture) {
+    statusEl.textContent = "Sending to Figma...";
+    showLoading();
+    
+    // Find Figma tab and send the capture
+    chrome.tabs.query({url: "*://*.figma.com/*"}, function(figmaTabs) {
+      if (figmaTabs.length === 0) {
+        statusEl.textContent = "No Figma tab found. Please open Figma.";
+        hideLoading();
+        return;
+      }
+      
+      chrome.tabs.sendMessage(figmaTabs[0].id, {
+        action: 'SEND_TO_FIGMA_PLUGIN',
+        source: 'sticker-chrome-extension',
+        type: 'component-data',
+        data: capture
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          statusEl.textContent = "Error sending to Figma: " + chrome.runtime.lastError.message;
+        } else if (response && response.success) {
+          statusEl.textContent = "Successfully sent to Figma!";
+          showSuccessMessage();
+        } else {
+          statusEl.textContent = "Failed to send to Figma";
+        }
+        hideLoading();
+      });
+    });
+  }
+  
+  function deleteCapture(captureId) {
+    chrome.storage.local.get(['recentCaptures'], function(result) {
+      const captures = result.recentCaptures || [];
+      const filteredCaptures = captures.filter(capture => capture.id !== captureId);
+      
+      chrome.storage.local.set({ recentCaptures: filteredCaptures }, function() {
+        loadRecentCaptures(); // Refresh the display
+      });
+    });
+  }
+  
+  function clearCaptureHistory() {
+    if (confirm('Are you sure you want to clear all capture history?')) {
+      chrome.storage.local.set({ recentCaptures: [] }, function() {
+        loadRecentCaptures();
+        statusEl.textContent = "Capture history cleared";
+      });
+    }
+  }
+  
+  function exportSettings() {
+    const exportData = {
+      settings: settings,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'canvas-weaver-settings.json';
+    a.click();
+    
+    URL.revokeObjectURL(url);
+    statusEl.textContent = "Settings exported";
+  }
+
+  function showSuccessMessage() {
+    successMessage.style.display = 'flex';
+    setTimeout(() => {
+      successMessage.style.display = 'none';
+    }, 3000);
+  }
   
   /**
    * Start the streamlined component capture workflow
