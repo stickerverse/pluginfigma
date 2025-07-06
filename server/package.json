@@ -1,22 +1,20 @@
 {
-  "name": "vision-api-proxy",
+  "name": "canvas-weaver-server",
   "version": "1.0.0",
-  "description": "Proxy server for Google Cloud Vision API",
+  "description": "WebSocket broker for Canvas Weaver",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.ts",
+    "build": "tsc"
   },
   "dependencies": {
-    "axios": "^1.4.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
-    "express": "^4.18.2"
+    "ws": "^8.16.0"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22"
-  },
-  "engines": {
-    "node": ">=14.0.0"
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "nodemon": "^3.0.3",
+    "typescript": "^5.3.3"
   }
 }
