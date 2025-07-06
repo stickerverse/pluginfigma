@@ -4,7 +4,7 @@
   "version": "1.0",
   "description": "Analyze web UI components and create system-ready Figma components",
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "enhanced-popup.html"
   },
   "permissions": [
     "activeTab",
@@ -21,7 +21,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content-script.js"],
+      "js": ["enhanced-content-script.js"],
       "run_at": "document_idle"
     }
   ],
@@ -31,7 +31,10 @@
   "web_accessible_resources": [{
     "resources": [
       "dom-crawler.js",
-      "element-inspector.js"
+      "element-inspector.js",
+      "dist/index.js",
+      "dist/capture.js",
+      "dist/content.js"
     ],
     "matches": ["<all_urls>"]
   }]

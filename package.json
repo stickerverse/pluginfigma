@@ -2,8 +2,11 @@
   "name": "stickerverse-plugin",
   "version": "1.0.0",
   "scripts": {
-    "build": "build-figma-plugin --minify",
-    "dev": "build-figma-plugin --watch"
+    "build": "npm run build:figma && npm run build:extension",
+    "build:figma": "build-figma-plugin --minify",
+    "build:extension": "tsc -p tsconfig.extension.json",
+    "dev": "build-figma-plugin --watch",
+    "dev:extension": "tsc -p tsconfig.extension.json --watch"
   },
   "dependencies": {
     "@create-figma-plugin/ui": "^3.2.1",
