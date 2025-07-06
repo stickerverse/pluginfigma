@@ -1,9 +1,19 @@
+// Figma plugin API types
+/// <reference types="@figma/plugin-typings" />
+
 // Show UI
 figma.showUI(__html__, { width: 400, height: 600 });
 
 // WebSocket connection for advanced processing
 let websocket: WebSocket | null = null;
 let isConnectedToServer = false;
+
+// OCR operation tracking
+let ocrOperationId = 0;
+let pendingOcrOperations = new Map<number, {
+  resolve: (result: TextBlock[]) => void;
+  reject: (error: Error) => void;
+}>();
 
 // Connect to WebSocket server
 function connectToWebSocket() {
@@ -105,6 +115,12 @@ async function handleProcessedImageData(data: any) {
 connectToWebSocket();
 
 // Type definitions for the libraries we'll use
+interface RGB {
+  r: number;
+  g: number;
+  b: number;
+}
+
 interface SegmentationResult {
   segmentMap: number[][];
   uniqueSegments: number[];
@@ -212,6 +228,22 @@ figma.ui.onmessage = async (msg) => {
         success: false,
         error: errorMessage
       });
+    }
+  }
+  
+  // Handle OCR results from UI
+  else if (msg.type === 'ocrResult') {
+    const { operationId, success, result, error } = msg;
+    const operation = pendingOcrOperations.get(operationId);
+    
+    if (operation) {
+      pendingOcrOperations.delete(operationId);
+      
+      if (success) {
+        operation.resolve(result);
+      } else {
+        operation.reject(new Error(error || 'OCR failed'));
+      }
     }
   }
   
@@ -529,15 +561,83 @@ function calculateSegmentBounds(
   };
 }
 
-// Step C: OCR Text Recognition (simplified for Figma environment)
+// Step C: OCR Text Recognition using Tesseract.js in UI
 async function performOCR(imageData: {
   data: Uint8Array;
   width: number;
   height: number;
 }): Promise<TextBlock[]> {
-  // In a real implementation, this would use Tesseract.js
-  // For Figma environment, we'll use placeholder text detection
+  console.log('[Canvas Weaver] Starting OCR via UI...');
   
+  try {
+    // Convert Uint8Array to base64 for sending to UI
+    const base64 = await convertUint8ArrayToBase64(imageData.data);
+    
+    // Create unique operation ID
+    const operationId = ++ocrOperationId;
+    
+    figma.notify('🔍 Analyzing text with OCR...', { timeout: 2000 });
+    
+    // Send OCR request to UI
+    figma.ui.postMessage({
+      type: 'performOCR',
+      operationId,
+      imageData: {
+        base64,
+        width: imageData.width,
+        height: imageData.height
+      }
+    });
+    
+    // Wait for OCR result from UI
+    const result = await new Promise<TextBlock[]>((resolve, reject) => {
+      pendingOcrOperations.set(operationId, { resolve, reject });
+      
+      // Set timeout for OCR operation (30 seconds)
+      setTimeout(() => {
+        if (pendingOcrOperations.has(operationId)) {
+          pendingOcrOperations.delete(operationId);
+          reject(new Error('OCR operation timed out'));
+        }
+      }, 30000);
+    });
+    
+    console.log('[Canvas Weaver] OCR completed, found', result.length, 'text blocks');
+    return result;
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] OCR failed:', error);
+    figma.notify('⚠️ OCR failed, using fallback detection', { timeout: 2000 });
+    
+    // Fallback to heuristic detection if OCR fails
+    return performFallbackTextDetection(imageData);
+  }
+}
+
+// Helper function to convert Uint8Array to base64
+async function convertUint8ArrayToBase64(data: Uint8Array): Promise<string> {
+  try {
+    // Create blob from Uint8Array
+    const blob = new Blob([data]);
+    
+    // Create data URL
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to convert to base64'));
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    throw new Error('Failed to convert image data to base64');
+  }
+}
+
+// Fallback text detection using heuristics
+function performFallbackTextDetection(imageData: {
+  data: Uint8Array;
+  width: number;
+  height: number;
+}): TextBlock[] {
   const textBlocks: TextBlock[] = [];
   
   // Detect potential text regions (simplified heuristic)
@@ -545,13 +645,79 @@ async function performOCR(imageData: {
   
   for (const region of textRegions) {
     textBlocks.push({
-      text: 'Lorem ipsum', // Placeholder text
-      confidence: 0.85,
+      text: 'Text', // Placeholder text
+      confidence: 0.5, // Lower confidence for heuristic detection
       bbox: region
     });
   }
   
   return textBlocks;
+}
+
+// Merge nearby text blocks into coherent text elements
+function mergeNearbyTextBlocks(textBlocks: TextBlock[]): TextBlock[] {
+  if (textBlocks.length <= 1) return textBlocks;
+  
+  const merged: TextBlock[] = [];
+  const processed = new Set<number>();
+  
+  for (let i = 0; i < textBlocks.length; i++) {
+    if (processed.has(i)) continue;
+    
+    const currentBlock = textBlocks[i];
+    const mergeGroup = [currentBlock];
+    processed.add(i);
+    
+    // Find nearby blocks to merge
+    for (let j = i + 1; j < textBlocks.length; j++) {
+      if (processed.has(j)) continue;
+      
+      const otherBlock = textBlocks[j];
+      
+      // Check if blocks are on the same line (similar y-coordinates)
+      const currentCenterY = (currentBlock.bbox.y0 + currentBlock.bbox.y1) / 2;
+      const otherCenterY = (otherBlock.bbox.y0 + otherBlock.bbox.y1) / 2;
+      const heightThreshold = Math.max(
+        currentBlock.bbox.y1 - currentBlock.bbox.y0,
+        otherBlock.bbox.y1 - otherBlock.bbox.y0
+      ) * 0.5;
+      
+      // Check horizontal distance
+      const horizontalGap = Math.min(
+        Math.abs(currentBlock.bbox.x1 - otherBlock.bbox.x0),
+        Math.abs(otherBlock.bbox.x1 - currentBlock.bbox.x0)
+      );
+      
+      if (Math.abs(currentCenterY - otherCenterY) <= heightThreshold && horizontalGap <= 50) {
+        mergeGroup.push(otherBlock);
+        processed.add(j);
+      }
+    }
+    
+    // Merge the group
+    if (mergeGroup.length === 1) {
+      merged.push(currentBlock);
+    } else {
+      // Sort by x-coordinate and merge
+      mergeGroup.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+      
+      const mergedText = mergeGroup.map(block => block.text).join(' ');
+      const avgConfidence = mergeGroup.reduce((sum, block) => sum + block.confidence, 0) / mergeGroup.length;
+      
+      const minX = Math.min(...mergeGroup.map(b => b.bbox.x0));
+      const minY = Math.min(...mergeGroup.map(b => b.bbox.y0));
+      const maxX = Math.max(...mergeGroup.map(b => b.bbox.x1));
+      const maxY = Math.max(...mergeGroup.map(b => b.bbox.y1));
+      
+      merged.push({
+        text: mergedText,
+        confidence: avgConfidence,
+        bbox: { x0: minX, y0: minY, x1: maxX, y1: maxY }
+      });
+    }
+  }
+  
+  return merged;
 }
 
 // Detect potential text regions using simple heuristics
