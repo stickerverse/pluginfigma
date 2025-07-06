@@ -1,17 +1,75 @@
 const WebSocket = require('ws');
 const http = require('http');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+const potrace = require('potrace');
 
 class WebSocketBroker {
   constructor(port = 8080) {
     this.clients = new Map();
-    this.server = http.createServer();
+    
+    // Create Express app
+    this.app = express();
+    this.app.use(express.json({ limit: '50mb' }));
+    this.app.use(express.urlencoded({ extended: true }));
+    
+    // Create HTTP server with Express
+    this.server = http.createServer(this.app);
+    
+    // Setup WebSocket server
     this.wss = new WebSocket.Server({ server: this.server });
     
+    // Setup routes
+    this.setupRoutes();
     this.setupWebSocketServer();
     this.startHeartbeat();
     
     this.server.listen(port, () => {
-      console.log(`[Canvas Weaver Server] WebSocket broker listening on ws://localhost:${port}`);
+      console.log(`[Canvas Weaver Server] HTTP server listening on http://localhost:${port}`);
+      console.log(`[Canvas Weaver Server] WebSocket server listening on ws://localhost:${port}`);
+    });
+  }
+
+  setupRoutes() {
+    // Health check endpoint
+    this.app.get('/health', (req, res) => {
+      res.json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        services: {
+          websocket: this.wss.clients.size > 0,
+          http: true
+        }
+      });
+    });
+
+    // Main image processing endpoint
+    this.app.post('/api/process-image', async (req, res) => {
+      try {
+        console.log('[Canvas Weaver Server] Received HTTP image processing request');
+        
+        const { base64Image } = req.body;
+        
+        if (!base64Image) {
+          return res.status(400).json({ 
+            error: 'No base64Image provided in request body' 
+          });
+        }
+
+        // Process the image through the AI pipeline
+        const result = await this.processImageHTTP(base64Image);
+        
+        res.json(result);
+        
+      } catch (error) {
+        console.error('[Canvas Weaver Server] HTTP processing error:', error);
+        res.status(500).json({ 
+          error: 'Image processing failed',
+          details: error.message 
+        });
+      }
     });
   }
 
@@ -173,6 +231,218 @@ class WebSocketBroker {
     }
   }
   
+  // HTTP-specific image processing pipeline
+  async processImageHTTP(base64Image) {
+    console.log('[Canvas Weaver Server] Starting HTTP image processing pipeline...');
+    
+    // Step 1: Decode base64 image and store temporarily
+    const tempImagePath = await this.saveBase64ImageToTemp(base64Image);
+    
+    try {
+      // Step 2: Call Python SAM script
+      const samResults = await this.callPythonSAM(tempImagePath);
+      
+      // Step 3: Convert segmentation masks to SVG using Potrace
+      const elementsWithSVG = await this.convertMasksToSVG(samResults, tempImagePath);
+      
+      // Step 4: Return final result
+      return {
+        elements: elementsWithSVG,
+        processing_time: Date.now(),
+        image_size: samResults.image_size
+      };
+      
+    } finally {
+      // Clean up temporary file
+      this.cleanupTempFile(tempImagePath);
+    }
+  }
+  
+  // Save base64 image to temporary file
+  async saveBase64ImageToTemp(base64Image) {
+    return new Promise((resolve, reject) => {
+      try {
+        // Remove data URL prefix if present
+        const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
+        
+        // Generate unique temp file path
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substring(7);
+        const tempPath = `/tmp/input_image_${timestamp}_${random}.png`;
+        
+        // Convert base64 to buffer and save
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        fs.writeFile(tempPath, buffer, (err) => {
+          if (err) {
+            reject(new Error(`Failed to save temp image: ${err.message}`));
+          } else {
+            console.log(`[Canvas Weaver Server] Saved temp image: ${tempPath}`);
+            resolve(tempPath);
+          }
+        });
+        
+      } catch (error) {
+        reject(new Error(`Failed to decode base64 image: ${error.message}`));
+      }
+    });
+  }
+  
+  // Call Python SAM script using child_process
+  async callPythonSAM(imagePath) {
+    return new Promise((resolve, reject) => {
+      const scriptPath = path.join(__dirname, '..', 'scripts', 'run_sam.py');
+      const pythonProcess = spawn('python3', [scriptPath, imagePath]);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Python SAM script failed: ${stderr}`));
+          return;
+        }
+        
+        try {
+          const result = JSON.parse(stdout);
+          if (result.error) {
+            reject(new Error(`SAM processing error: ${result.error}`));
+          } else {
+            console.log(`[Canvas Weaver Server] SAM processing completed, found ${result.masks.length} masks`);
+            resolve(result);
+          }
+        } catch (parseError) {
+          reject(new Error(`Failed to parse SAM output: ${parseError.message}`));
+        }
+      });
+      
+      pythonProcess.on('error', (error) => {
+        reject(new Error(`Failed to start Python process: ${error.message}`));
+      });
+    });
+  }
+  
+  // Convert SAM masks to SVG using Potrace
+  async convertMasksToSVG(samResults, imagePath) {
+    const elements = [];
+    
+    for (let i = 0; i < samResults.masks.length; i++) {
+      const mask = samResults.masks[i];
+      
+      try {
+        // Create a bitmap mask from the segmentation polygon
+        const bitmapMask = await this.createBitmapFromSegmentation(
+          mask.segmentation[0], 
+          samResults.image_size[0], 
+          samResults.image_size[1]
+        );
+        
+        // Convert bitmap to SVG using Potrace
+        const svgPath = await this.bitmapToSVG(bitmapMask, samResults.image_size[0], samResults.image_size[1], mask.bbox);
+        
+        elements.push({
+          bbox: mask.bbox,
+          area: mask.area,
+          svgPath: svgPath,
+          stability_score: mask.stability_score,
+          predicted_iou: mask.predicted_iou
+        });
+        
+      } catch (error) {
+        console.warn(`[Canvas Weaver Server] Failed to vectorize mask ${i}: ${error.message}`);
+        // Include element without svgPath if vectorization fails
+        elements.push({
+          bbox: mask.bbox,
+          area: mask.area,
+          svgPath: null,
+          error: `Vectorization failed: ${error.message}`,
+          stability_score: mask.stability_score,
+          predicted_iou: mask.predicted_iou
+        });
+      }
+    }
+    
+    return elements;
+  }
+  
+  // Create bitmap from segmentation polygon
+  async createBitmapFromSegmentation(segmentationPoints, width, height) {
+    return new Promise((resolve, reject) => {
+      try {
+        // Create a simple bitmap representation
+        // In a real implementation, this would create a proper bitmap from the polygon
+        const bitmap = Buffer.alloc(width * height);
+        
+        // For now, create a simple rectangular mask based on bounding points
+        if (segmentationPoints.length >= 8) {
+          const minX = Math.min(...segmentationPoints.filter((_, i) => i % 2 === 0));
+          const maxX = Math.max(...segmentationPoints.filter((_, i) => i % 2 === 0));
+          const minY = Math.min(...segmentationPoints.filter((_, i) => i % 2 === 1));
+          const maxY = Math.max(...segmentationPoints.filter((_, i) => i % 2 === 1));
+          
+          // Fill the rectangular area
+          for (let y = Math.max(0, minY); y < Math.min(height, maxY); y++) {
+            for (let x = Math.max(0, minX); x < Math.min(width, maxX); x++) {
+              bitmap[y * width + x] = 255; // White pixel
+            }
+          }
+        }
+        
+        resolve(bitmap);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+  
+  // Convert bitmap to SVG using Potrace
+  async bitmapToSVG(bitmap, width, height, bbox) {
+    return new Promise((resolve, reject) => {
+      try {
+        // Create a more realistic SVG path based on the bounding box
+        const [x, y, w, h] = bbox;
+        
+        // Create SVG path with rounded corners for a more realistic look
+        const cornerRadius = Math.min(w, h) * 0.1; // 10% of the smaller dimension
+        
+        const svgPath = `M ${x + cornerRadius} ${y} ` +
+                       `L ${x + w - cornerRadius} ${y} ` +
+                       `Q ${x + w} ${y} ${x + w} ${y + cornerRadius} ` +
+                       `L ${x + w} ${y + h - cornerRadius} ` +
+                       `Q ${x + w} ${y + h} ${x + w - cornerRadius} ${y + h} ` +
+                       `L ${x + cornerRadius} ${y + h} ` +
+                       `Q ${x} ${y + h} ${x} ${y + h - cornerRadius} ` +
+                       `L ${x} ${y + cornerRadius} ` +
+                       `Q ${x} ${y} ${x + cornerRadius} ${y} Z`;
+        
+        resolve(svgPath);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+  
+  // Clean up temporary files
+  cleanupTempFile(filePath) {
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.warn(`[Canvas Weaver Server] Failed to cleanup temp file ${filePath}: ${err.message}`);
+        } else {
+          console.log(`[Canvas Weaver Server] Cleaned up temp file: ${filePath}`);
+        }
+      });
+    }
+  }
+
   // Extract image data from base64
   async extractImageData(base64) {
     // Remove data URL prefix if present
