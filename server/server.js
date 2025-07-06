@@ -54,6 +54,11 @@ class WebSocketBroker {
               ws.close();
             }
           } 
+          // Handle image processing requests
+          else if (message.type === 'processImage') {
+            console.log('[Canvas Weaver Server] Processing image request');
+            this.handleImageProcessing(message, ws);
+          }
           // Handle message forwarding
           else if (clientId) {
             const targetId = clientId === 'figma' ? 'extension' : 'figma';
@@ -130,6 +135,147 @@ class WebSocketBroker {
         client.ws.ping();
       });
     }, 30000); // 30 second heartbeat
+  }
+
+  // Handle image processing requests
+  async handleImageProcessing(message, ws) {
+    try {
+      console.log('[Canvas Weaver Server] Starting image processing...');
+      
+      // Validate base64 data
+      if (!message.base64) {
+        throw new Error('No image data provided');
+      }
+      
+      // Extract image metadata
+      const imageData = await this.extractImageData(message.base64);
+      
+      // Process image based on options
+      const processedData = await this.processImage(imageData, message.options || {});
+      
+      // Send processed data back to client
+      ws.send(JSON.stringify({
+        type: 'processedImage',
+        data: processedData,
+        timestamp: new Date().toISOString()
+      }));
+      
+      console.log('[Canvas Weaver Server] Image processing completed successfully');
+      
+    } catch (error) {
+      console.error('[Canvas Weaver Server] Image processing error:', error);
+      
+      ws.send(JSON.stringify({
+        type: 'processingError',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  }
+  
+  // Extract image data from base64
+  async extractImageData(base64) {
+    // Remove data URL prefix if present
+    const base64Data = base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
+    
+    // For now, we'll simulate image analysis
+    // In a real implementation, you'd use sharp or similar to analyze the image
+    const mockImageData = {
+      width: 400,
+      height: 300,
+      format: 'png',
+      channels: 4,
+      hasAlpha: true,
+      base64: base64Data
+    };
+    
+    return mockImageData;
+  }
+  
+  // Process image with AI/ML techniques
+  async processImage(imageData, options) {
+    console.log('[Canvas Weaver Server] Processing with options:', options);
+    
+    // Mock processed data - in real implementation, this would use TensorFlow.js, OpenCV, etc.
+    const processedData = {
+      width: imageData.width,
+      height: imageData.height,
+      shapes: [],
+      textBlocks: [],
+      vectors: [],
+      layout: null
+    };
+    
+    // Mock shape detection
+    if (options.useSegmentation) {
+      processedData.shapes = [
+        {
+          type: 'rectangle',
+          x: 20,
+          y: 20,
+          width: 200,
+          height: 50,
+          fill: { r: 0.2, g: 0.5, b: 1.0 },
+          cornerRadius: 8
+        },
+        {
+          type: 'rectangle',
+          x: 20,
+          y: 80,
+          width: 360,
+          height: 200,
+          fill: { r: 0.95, g: 0.95, b: 0.95 },
+          cornerRadius: 12
+        }
+      ];
+    }
+    
+    // Mock text recognition
+    if (options.useOCR) {
+      processedData.textBlocks = [
+        {
+          text: 'Header Title',
+          x: 30,
+          y: 35,
+          fontSize: 18,
+          fontFamily: 'Inter',
+          fontStyle: 'Bold',
+          color: { r: 1, g: 1, b: 1 }
+        },
+        {
+          text: 'This is some body text that was detected by OCR processing.',
+          x: 30,
+          y: 100,
+          fontSize: 14,
+          fontFamily: 'Inter',
+          fontStyle: 'Regular',
+          color: { r: 0.2, g: 0.2, b: 0.2 }
+        }
+      ];
+    }
+    
+    // Mock vector detection
+    if (options.useVectorization) {
+      processedData.vectors = [
+        {
+          paths: 'M 250 40 L 260 50 L 250 60 L 240 50 Z',
+          x: 240,
+          y: 40,
+          width: 20,
+          height: 20,
+          fill: { r: 0.1, g: 0.8, b: 0.4 }
+        }
+      ];
+    }
+    
+    // Mock layout detection
+    processedData.layout = {
+      type: 'vertical',
+      spacing: 16,
+      padding: 20
+    };
+    
+    return processedData;
   }
 }
 
