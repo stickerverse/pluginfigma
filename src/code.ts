@@ -1,9 +1,19 @@
+// Figma plugin API types
+/// <reference types="@figma/plugin-typings" />
+
 // Show UI
 figma.showUI(__html__, { width: 400, height: 600 });
 
 // WebSocket connection for advanced processing
 let websocket: WebSocket | null = null;
 let isConnectedToServer = false;
+
+// OCR operation tracking
+let ocrOperationId = 0;
+let pendingOcrOperations = new Map<number, {
+  resolve: (result: TextBlock[]) => void;
+  reject: (error: Error) => void;
+}>();
 
 // Connect to WebSocket server
 function connectToWebSocket() {
@@ -105,6 +115,12 @@ async function handleProcessedImageData(data: any) {
 connectToWebSocket();
 
 // Type definitions for the libraries we'll use
+interface RGB {
+  r: number;
+  g: number;
+  b: number;
+}
+
 interface SegmentationResult {
   segmentMap: number[][];
   uniqueSegments: number[];
@@ -212,6 +228,22 @@ figma.ui.onmessage = async (msg) => {
         success: false,
         error: errorMessage
       });
+    }
+  }
+  
+  // Handle OCR results from UI
+  else if (msg.type === 'ocrResult') {
+    const { operationId, success, result, error } = msg;
+    const operation = pendingOcrOperations.get(operationId);
+    
+    if (operation) {
+      pendingOcrOperations.delete(operationId);
+      
+      if (success) {
+        operation.resolve(result);
+      } else {
+        operation.reject(new Error(error || 'OCR failed'));
+      }
     }
   }
   
@@ -703,15 +735,84 @@ function calculateSegmentBounds(
   };
 }
 
-// Step C: OCR Text Recognition (simplified for Figma environment)
+// Step C: OCR Text Recognition using Tesseract.js in UI
 async function performOCR(imageData: {
   data: Uint8Array;
   width: number;
   height: number;
 }): Promise<TextBlock[]> {
-  // In a real implementation, this would use Tesseract.js
-  // For Figma environment, we'll use placeholder text detection
+  console.log('[Canvas Weaver] Starting OCR via UI...');
   
+  try {
+    // Convert Uint8Array to base64 for sending to UI
+    const base64 = await convertUint8ArrayToBase64(imageData.data);
+    
+    // Create unique operation ID
+    const operationId = ++ocrOperationId;
+    
+    figma.notify('🔍 Analyzing text with OCR...', { timeout: 2000 });
+    
+    // Send OCR request to UI
+    figma.ui.postMessage({
+      type: 'performOCR',
+      operationId,
+      imageData: {
+        base64,
+        width: imageData.width,
+        height: imageData.height
+      }
+    });
+    
+    // Wait for OCR result from UI
+    const result = await new Promise<TextBlock[]>((resolve, reject) => {
+      pendingOcrOperations.set(operationId, { resolve, reject });
+      
+      // Set timeout for OCR operation (30 seconds)
+      setTimeout(() => {
+        if (pendingOcrOperations.has(operationId)) {
+          pendingOcrOperations.delete(operationId);
+          reject(new Error('OCR operation timed out'));
+        }
+      }, 30000);
+    });
+    
+    console.log('[Canvas Weaver] OCR completed, found', result.length, 'text blocks');
+    return result;
+    
+  } catch (error) {
+    console.error('[Canvas Weaver] OCR failed:', error);
+    figma.notify('⚠️ OCR failed, using fallback detection', { timeout: 2000 });
+    
+    // Fallback to heuristic detection if OCR fails
+    return performFallbackTextDetection(imageData);
+  }
+}
+
+// Helper function to convert Uint8Array to base64
+async function convertUint8ArrayToBase64(data: Uint8Array): Promise<string> {
+  try {
+    // Convert Uint8Array to binary string
+    let binaryString = '';
+    for (let i = 0; i < data.length; i++) {
+      binaryString += String.fromCharCode(data[i]);
+    }
+    
+    // Convert to base64 
+    const base64 = btoa(binaryString);
+    
+    // Add data URL prefix for images
+    return `data:image/png;base64,${base64}`;
+  } catch (error) {
+    throw new Error('Failed to convert image data to base64');
+  }
+}
+
+// Fallback text detection using heuristics
+function performFallbackTextDetection(imageData: {
+  data: Uint8Array;
+  width: number;
+  height: number;
+}): TextBlock[] {
   const textBlocks: TextBlock[] = [];
   
   // Detect potential text regions (simplified heuristic)
@@ -719,8 +820,8 @@ async function performOCR(imageData: {
   
   for (const region of textRegions) {
     textBlocks.push({
-      text: 'Lorem ipsum', // Placeholder text
-      confidence: 0.85,
+      text: 'Text', // Placeholder text
+      confidence: 0.5, // Lower confidence for heuristic detection
       bbox: region
     });
   }
