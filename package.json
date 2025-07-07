@@ -5,22 +5,25 @@
     "build": "npm run build:figma && npm run build:extension",
     "build:figma": "build-figma-plugin --minify",
     "build:extension": "tsc -p tsconfig.extension.json",
+    "build:production": "node scripts/build-production.js",
     "dev": "build-figma-plugin --watch",
-    "dev:extension": "tsc -p tsconfig.extension.json --watch"
+    "dev:extension": "tsc -p tsconfig.extension.json --watch",
+    "start:server": "cd server && node server.js",
+    "start:server:prod": "cd server && NODE_ENV=production node server.js"
   },
   "dependencies": {
-    "@create-figma-plugin/ui": "^3.2.1",
-    "@create-figma-plugin/utilities": "^2.5.0",
+    "@create-figma-plugin/ui": "^2.6.1",
+    "@create-figma-plugin/utilities": "^2.6.1",
     "preact": "^10.26.9",
     "tesseract.js": "^6.0.1",
     "canvas": "^3.1.2"
   },
   "devDependencies": {
-    "@create-figma-plugin/build": "^2.5.0",
-    "@create-figma-plugin/tsconfig": "^2.5.0",
-    "@figma/plugin-typings": "^1.50.0",
+    "@create-figma-plugin/build": "^2.6.1",
+    "@create-figma-plugin/tsconfig": "^2.6.1",
+    "@figma/plugin-typings": "^1.114.0",
     "@types/tesseract.js": "^0.0.2",
-    "typescript": "^4.7.4"
+    "typescript": "^4.9.5"
   },
   "figma-plugin": {
     "id": "canvas-weaver",

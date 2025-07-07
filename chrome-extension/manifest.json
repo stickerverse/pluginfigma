@@ -1,10 +1,20 @@
 {
   "manifest_version": 3,
-  "name": "Sticker Component Analyzer",
+  "name": "Canvas Weaver - UI Component Capture",
   "version": "1.0",
-  "description": "Analyze web UI components and create system-ready Figma components",
+  "description": "Capture UI components from any website and convert them to editable Figma components",
   "action": {
-    "default_popup": "enhanced-popup.html"
+    "default_popup": "enhanced-popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "permissions": [
     "activeTab",
@@ -22,19 +32,21 @@
     {
       "matches": ["<all_urls>"],
       "js": ["enhanced-content-script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "web_accessible_resources": [{
     "resources": [
       "dom-crawler.js",
       "element-inspector.js",
-      "dist/index.js",
-      "dist/capture.js",
-      "dist/content.js"
+      "figma-bridge.js",
+      "popup.css",
+      "icons/*"
     ],
     "matches": ["<all_urls>"]
   }]

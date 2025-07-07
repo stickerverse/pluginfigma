@@ -15,6 +15,14 @@ import {
 } from '@create-figma-plugin/ui'
 import { emit } from '@create-figma-plugin/utilities'
 import Tesseract from 'tesseract.js'
+import type { 
+  TextBlock, 
+  ConnectionStatus, 
+  ProcessingState, 
+  Settings,
+  WebSocketMessage,
+  PluginMessage
+} from './types'
 
 // WebSocket connection management
 class WebSocketManager {
@@ -204,30 +212,7 @@ class WebSocketManager {
   }
 }
 
-interface TextBlock {
-  text: string;
-  confidence: number;
-  bbox: { x0: number; y0: number; x1: number; y1: number };
-}
-
-interface ConnectionStatus {
-  extension: boolean;
-  server: boolean;
-  lastUpdate: number;
-}
-
-interface ProcessingState {
-  stage: 'idle' | 'analyzing' | 'processing' | 'generating' | 'complete' | 'error';
-  progress: number;
-  message: string;
-}
-
-interface Settings {
-  autoProcess: boolean;
-  showNotifications: boolean;
-  ocrLanguage: string;
-  qualityMode: 'fast' | 'balanced' | 'high';
-}
+// Types are now imported from ./types
 
 // Create a singleton WebSocket manager instance
 const webSocketManager = new WebSocketManager();
@@ -271,7 +256,7 @@ function Plugin() {
           message: 'Initializing OCR engine...'
         });
         
-        const worker = await Tesseract.createWorker();
+        const worker = await Tesseract.createWorker(settings.ocrLanguage);
         
         if (isMounted) {
           setProcessingState({
@@ -280,9 +265,6 @@ function Plugin() {
             message: 'Loading language data...'
           });
         }
-        
-        await worker.loadLanguage(settings.ocrLanguage);
-        await worker.initialize(settings.ocrLanguage);
         
         if (isMounted) {
           setTesseractWorker(worker);
@@ -328,8 +310,9 @@ function Plugin() {
       console.log('[Canvas Weaver UI] Received plugin message:', message.type);
       
       switch (message.type) {
-        case 'connect-to-websocket':
+        case 'websocketUrl':
           try {
+            console.log('[Canvas Weaver UI] Connecting to WebSocket:', message.url);
             webSocketManager.connect(message.url);
           } catch (error) {
             console.error('[Canvas Weaver UI] Failed to connect to WebSocket:', error);
@@ -487,19 +470,36 @@ function Plugin() {
 
       // Process OCR results and convert to TextBlock format  
       const textBlocks: TextBlock[] = [];
-      for (const line of data.lines) {
-        if (line.confidence > 30) { // Filter out low-confidence results
-          textBlocks.push({
-            text: line.text.trim(),
-            confidence: line.confidence / 100, // Convert to 0-1 range
-            bbox: {
-              x0: line.bbox.x0,
-              y0: line.bbox.y0,
-              x1: line.bbox.x1,
-              y1: line.bbox.y1
-            }
-          });
+      
+      // In Tesseract.js v6, check for available data structures
+      const lines = (data as any).lines || [];
+      if (lines.length > 0) {
+        for (const line of lines) {
+          if (line.confidence > 30) { // Filter out low-confidence results
+            textBlocks.push({
+              text: line.text.trim(),
+              confidence: line.confidence / 100, // Convert to 0-1 range
+              bbox: {
+                x0: line.bbox.x0,
+                y0: line.bbox.y0,
+                x1: line.bbox.x1,
+                y1: line.bbox.y1
+              }
+            });
+          }
         }
+      } else {
+        // Fallback: create a single text block from the main text
+        textBlocks.push({
+          text: data.text.trim(),
+          confidence: 0.8, // Default confidence
+          bbox: {
+            x0: 0,
+            y0: 0,
+            x1: 100,
+            y1: 20
+          }
+        });
       }
 
       // Merge nearby text blocks
@@ -594,25 +594,36 @@ function Plugin() {
   }, [settings.autoProcess, settings.showNotifications]);
 
   const handleCreateComponentClick = useCallback(function () {
+    if (!imagePreview) {
+      setProcessingState({
+        stage: 'error',
+        progress: 0,
+        message: 'No image to process'
+      });
+      return;
+    }
+    
     setProcessingState({
       stage: 'generating',
       progress: 50,
       message: 'Creating Figma component...'
     });
     
-    emit('IMAGE_ANALYSIS_COMPLETE', { success: true });
-    
-    setTimeout(() => {
-      setProcessingState({
-        stage: 'complete',
-        progress: 100,
-        message: 'Component created successfully!'
-      });
-    }, 1500);
-  }, []);
+    // Send image data to main plugin for processing
+    parent.postMessage({
+      pluginMessage: {
+        type: 'generateComponentFromImage',
+        base64: imagePreview
+      }
+    }, '*');
+  }, [imagePreview]);
 
   const handleCloseButtonClick = useCallback(function () {
-    emit('CLOSE_PLUGIN');
+    parent.postMessage({
+      pluginMessage: {
+        type: 'cancel'
+      }
+    }, '*');
   }, []);
 
   const handleRetryConnection = useCallback(() => {
@@ -622,7 +633,12 @@ function Plugin() {
       server: false
     }));
     
-    // Try to reconnect
+    // Try to reconnect to WebSocket
+    if (settings.websocketUrl) {
+      webSocketManager.connect(settings.websocketUrl);
+    }
+    
+    // Try to reconnect to extension
     window.postMessage({
       source: 'sticker-figma-plugin',
       type: 'reconnect-extension'
@@ -643,33 +659,31 @@ function Plugin() {
   }, []);
 
   // Connection status component
-  const ConnectionStatus = () => (
+  const ConnectionStatusComponent = () => (
     <Stack space="extraSmall">
-      <Stack space="extraSmall">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{ 
           width: '8px', 
           height: '8px', 
           borderRadius: '50%', 
-          backgroundColor: connectionStatus.extension ? '#0f7b0f' : '#e53e3e',
-          marginTop: '6px'
+          backgroundColor: connectionStatus.extension ? '#0f7b0f' : '#e53e3e'
         }} />
         <Text>
           Extension: {connectionStatus.extension ? 'Connected' : 'Disconnected'}
         </Text>
-      </Stack>
-      <Stack space="extraSmall">
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{ 
           width: '8px', 
           height: '8px', 
           borderRadius: '50%', 
-          backgroundColor: connectionStatus.server ? '#0f7b0f' : '#718096',
-          marginTop: '6px'
+          backgroundColor: connectionStatus.server ? '#0f7b0f' : '#718096'
         }} />
         <Text>
           Server: {connectionStatus.server ? 'Connected' : 'Offline'}
         </Text>
-      </Stack>
-      {!connectionStatus.extension && (
+      </div>
+      {(!connectionStatus.extension || !connectionStatus.server) && (
         <Button onClick={handleRetryConnection} secondary>
           Retry Connection
         </Button>
@@ -697,7 +711,8 @@ function Plugin() {
           </Preview>
         )}
       </Stack>
-  );
+    );
+  };
 
   const tabOptions = [
     { value: 'capture', children: 'Capture' },
@@ -715,17 +730,17 @@ function Plugin() {
         <strong>Chrome Extension:</strong> {connectionStatus.extension ? '✅ Connected' : '❌ Disconnected'}
       </Text>
       <Button
-        onClick={() => webSocketManager.connect('ws://localhost:8080')}
+        onClick={() => webSocketManager.connect('ws://localhost:8082')}
         disabled={wsConnected}
       >
         {wsConnected ? 'Connected to Server' : 'Connect to Server'}
       </Button>
       <Divider />
       <Text>
-        <strong>Server Address:</strong> ws://localhost:8080
+        <strong>Server Address:</strong> ws://localhost:8082
       </Text>
       <Text>
-        <strong>API Endpoint:</strong> http://localhost:3000/api/process-image
+        <strong>API Endpoint:</strong> http://localhost:3001/api/process-image
       </Text>
     </Stack>
   );
@@ -755,7 +770,7 @@ function Plugin() {
         <Text>
           <strong>Connection Status</strong>
         </Text>
-        <ConnectionStatus />
+        <ConnectionStatusComponent />
       </Stack>
 
       <VerticalSpace space="medium" />
@@ -784,14 +799,14 @@ function Plugin() {
           )}
           
           {initError && (
-            <Banner variant="warning" icon="❌">
-              OCR initialization failed: {initError}
+            <Banner variant="warning">
+              ❌ OCR initialization failed: {initError}
             </Banner>
           )}
           
           {!isInitializing && !initError && (
-            <Banner variant="success" icon="✅">
-              OCR engine ready!
+            <Banner variant="success">
+              ✅ OCR engine ready!
             </Banner>
           )}
 
@@ -800,6 +815,29 @@ function Plugin() {
 
           {/* Image Preview */}
           <ImagePreviewComponent />
+          
+          {/* Processing Status */}
+          {processingState.stage !== 'idle' && (
+            <Stack space="small">
+              <Text><strong>Status:</strong> {processingState.message}</Text>
+              {processingState.stage === 'processing' && (
+                <div style={{ 
+                  width: '100%', 
+                  height: '4px', 
+                  backgroundColor: '#f0f0f0', 
+                  borderRadius: '2px',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${processingState.progress}%`,
+                    height: '100%',
+                    backgroundColor: '#0066cc',
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+              )}
+            </Stack>
+          )}
 
           {/* Action Buttons */}
           <Stack space="small">
@@ -893,15 +931,122 @@ function mergeNearbyTextBlocks(textBlocks: TextBlock[]): TextBlock[] {
 }
 
 // Image Preview Component
-function ImagePreviewComponent(): JSX.Element | null {
-  return null; // Placeholder for now
+function ImagePreviewComponent() {
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.source === 'sticker-chrome-extension' && event.data.type === 'component-captured') {
+        setImagePreview(event.data.imageData);
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+  
+  if (!imagePreview) {
+    return (
+      <Stack space="small">
+        <Text>No image captured yet. Use the Chrome extension to capture a component.</Text>
+      </Stack>
+    );
+  }
+  
+  return (
+    <Preview>
+      <img 
+        src={imagePreview} 
+        alt="Captured component" 
+        style={{ 
+          maxWidth: '100%', 
+          maxHeight: '200px',
+          borderRadius: '4px'
+        }} 
+      />
+    </Preview>
+  );
 }
 
 // Settings Panel Component  
 function SettingsPanel() {
+  const [settings, setSettings] = useState<Settings>({
+    autoProcess: true,
+    showNotifications: true,
+    ocrLanguage: 'eng',
+    qualityMode: 'balanced',
+    websocketUrl: 'ws://localhost:8082'
+  });
+  
+  const handleSettingsChange = useCallback((key: keyof Settings, value: any) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  }, []);
+  
   return (
     <Stack space="medium">
-      <Text>Settings panel content will go here</Text>
+      <Text><strong>Processing Settings</strong></Text>
+      
+      <Stack space="small">
+        <Text>Quality Mode:</Text>
+        <select 
+          value={settings.qualityMode} 
+          onChange={(e) => handleSettingsChange('qualityMode', e.target.value)}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+        >
+          <option value="fast">Fast</option>
+          <option value="balanced">Balanced</option>
+          <option value="high">High Quality</option>
+        </select>
+      </Stack>
+      
+      <Stack space="small">
+        <Text>OCR Language:</Text>
+        <select 
+          value={settings.ocrLanguage} 
+          onChange={(e) => handleSettingsChange('ocrLanguage', e.target.value)}
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+        >
+          <option value="eng">English</option>
+          <option value="spa">Spanish</option>
+          <option value="fra">French</option>
+          <option value="deu">German</option>
+        </select>
+      </Stack>
+      
+      <Stack space="small">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input 
+            type="checkbox" 
+            checked={settings.autoProcess} 
+            onChange={(e) => handleSettingsChange('autoProcess', e.target.checked)}
+          />
+          <Text>Auto-process captured images</Text>
+        </label>
+      </Stack>
+      
+      <Stack space="small">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input 
+            type="checkbox" 
+            checked={settings.showNotifications} 
+            onChange={(e) => handleSettingsChange('showNotifications', e.target.checked)}
+          />
+          <Text>Show notifications</Text>
+        </label>
+      </Stack>
+      
+      <Divider />
+      
+      <Stack space="small">
+        <Text><strong>WebSocket Server URL:</strong></Text>
+        <input 
+          type="text" 
+          value={settings.websocketUrl || ''} 
+          onChange={(e) => handleSettingsChange('websocketUrl', e.target.value)}
+          placeholder="ws://localhost:8082"
+          style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', width: '100%' }}
+        />
+      </Stack>
     </Stack>
   );
 }

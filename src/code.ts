@@ -1,8 +1,15 @@
 // Figma plugin API types
 /// <reference types="@figma/plugin-typings" />
 
+import { config, Logger } from './production-config';
+
 // Show UI
 figma.showUI(__html__, { width: 400, height: 600 });
+
+// Wait a moment for UI to initialize, then start connection
+setTimeout(() => {
+  connectToServerViaUI();
+}, 500);
 
 // Server connection status tracking
 let isConnectedToServer = false;
@@ -14,24 +21,46 @@ let pendingOcrOperations = new Map<number, {
   reject: (error: Error) => void;
 }>();
 
+// Extension status tracking
+let isExtensionConnected = false;
+
 // Request the UI to establish WebSocket connection
 const connectToServerViaUI = () => {
   try {
     // Send a message to the UI to establish WebSocket connection
     figma.ui.postMessage({
-      type: 'connect-to-websocket',
-      url: 'ws://localhost:8080'
+      type: 'websocketUrl',
+      url: config.websocketUrl
     });
-    console.log('[Canvas Weaver] Requested WebSocket connection via UI');
+    Logger.log('Provided WebSocket URL to UI');
   } catch (error) {
-    console.error('[Canvas Weaver] Failed to request WebSocket connection:', error);
+    Logger.error('Failed to send WebSocket URL', error);
     setTimeout(connectToServerViaUI, 5000);
+  }
+}
+
+// Check if extension is installed and active
+const checkExtensionStatus = (forceReconnect = false) => {
+  try {
+    // This is a placeholder. In a real implementation, you would have
+    // some mechanism to detect if the extension is actually connected.
+    // For now, we'll just report the last known status
+    figma.ui.postMessage({
+      type: 'extensionStatus',
+      connected: isExtensionConnected
+    });
+    
+    if (forceReconnect) {
+      connectToServerViaUI();
+    }
+  } catch (error) {
+    Logger.error('Failed to check extension status', error);
   }
 }
 
 // Main message handler - refactored for async component generation and OCR coordination
 const mainMessageHandler = async (msg: any) => {
-  console.log('[Canvas Weaver] Received message:', msg.type);
+  Logger.log('Received message:', msg.type);
   
   // Handle resize messages
   if (msg.type === 'resize') {
@@ -46,6 +75,23 @@ const mainMessageHandler = async (msg: any) => {
   }
   
   // Handle messages from UI related to WebSocket communication
+  else if (msg.type === 'getWebSocketUrl') {
+    connectToServerViaUI();
+    return;
+  }
+  
+  // Handle extension status check request
+  else if (msg.type === 'checkExtensionStatus') {
+    checkExtensionStatus(msg.forceReconnect);
+    return;
+  }
+  
+  // Handle websocket connection status updates
+  else if (msg.type === 'websocket-status-update') {
+    isExtensionConnected = msg.connected;
+    return;
+  }
+  // Handle messages from WebSocket via UI
   if (msg.source === 'websocket') {
     handleUIMessage(msg);
     return;
@@ -60,7 +106,7 @@ const mainMessageHandler = async (msg: any) => {
       pendingOcrOperations.delete(operationId);
       
       if (success) {
-        console.log('[Canvas Weaver] OCR operation', operationId, 'completed successfully with', result?.length || 0, 'text blocks');
+        console.log('[Canvas Weaver] OCR operation', operationId, 'completed successfully with', (result && result.length) || 0, 'text blocks');
         figma.notify('📝 OCR text recognition completed!', { timeout: 2000 });
         operation.resolve(result);
       } else {
@@ -68,6 +114,45 @@ const mainMessageHandler = async (msg: any) => {
         figma.notify('⚠️ OCR failed, using fallback detection', { timeout: 3000 });
         operation.reject(new Error(error || 'OCR operation failed'));
       }
+    }
+    return;
+  }
+  
+  // Handle component generation from processed data (auto-scan)
+  if (msg.type === 'generateComponentFromProcessedData') {
+    try {
+      figma.notify('🎨 Creating component from auto-scan...', { timeout: 3000 });
+      
+      const component = await buildComponentFromProcessedData(msg.data);
+      
+      // Add to page and position
+      figma.currentPage.appendChild(component);
+      const viewportCenter = figma.viewport.center;
+      component.x = Math.round(viewportCenter.x - component.width / 2);
+      component.y = Math.round(viewportCenter.y - component.height / 2);
+      
+      figma.currentPage.selection = [component];
+      figma.viewport.scrollAndZoomIntoView([component]);
+      
+      // Copy to clipboard for easy pasting
+      figma.notify('✅ Component ready! You can now paste it anywhere with Cmd+V (Mac) or Ctrl+V (Windows)', { timeout: 6000 });
+      
+      // Notify UI of completion
+      figma.ui.postMessage({
+        type: 'auto-scan-complete',
+        success: true
+      });
+      
+    } catch (error) {
+      console.error('[Canvas Weaver] Error creating auto-scan component:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      figma.notify(`❌ Auto-scan failed: ${errorMessage}`, { timeout: 5000, error: true });
+      
+      figma.ui.postMessage({
+        type: 'auto-scan-complete',
+        success: false,
+        error: errorMessage
+      });
     }
     return;
   }
@@ -221,8 +306,7 @@ const handleProcessedImageData = async (data: any) => {
   }
 }
 
-// Request UI to initialize WebSocket connection
-connectToServerViaUI();
+// Note: WebSocket connection will be initiated after UI loads
 
 // Type definitions for the libraries we'll use
 interface RGB {
@@ -244,6 +328,15 @@ interface VectorLayer {
   bounds: { x: number; y: number; width: number; height: number };
 }
 
+interface ProcessedImageData {
+  vectors: any[];
+  text: any[];
+  metadata: {
+    width: number;
+    height: number;
+  };
+}
+
 interface TextBlock {
   text: string;
   confidence: number;
@@ -252,8 +345,8 @@ interface TextBlock {
 
 
 
-// Register the main message handler (single registration)
-figma.ui.on("message", mainMessageHandler);
+// Register the main message handler
+figma.ui.onmessage = mainMessageHandler;
 
 // Helper function to count total layers in a node
 function countLayers(node: SceneNode): number {
@@ -376,13 +469,17 @@ async function processImageWithAIServer(base64: string): Promise<any | null> {
       const result = await new Promise<any>((resolve, reject) => {
         const handleResponse = (message: any) => {
           if (message.source === 'websocket' && message.type === 'image-processed') {
-            figma.ui.off('message', handleResponse);
+            figma.ui.onmessage = originalHandler;
             resolve(message.data);
           }
         };
         
-        // Add a temporary listener instead of replacing the main handler
-        figma.ui.on('message', handleResponse);
+        // Set up temporary message handler
+        const originalHandler = figma.ui.onmessage;
+        figma.ui.onmessage = (message) => {
+          originalHandler?.(message);
+          handleResponse(message);
+        };
       });
       
       clearTimeout(timeoutId);
@@ -391,18 +488,22 @@ async function processImageWithAIServer(base64: string): Promise<any | null> {
       figma.notify('✅ AI analysis complete!', { timeout: 2000 });
       return result;
       
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(`[Canvas Weaver] AI server request failed (attempt ${attempt}):`, error);
       
       // Handle specific error types
-      if (error.name === 'AbortError') {
-        console.log('[Canvas Weaver] Request timed out');
-        figma.notify(`⏱️ Request timed out (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
-      } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        console.log('[Canvas Weaver] Network error - server may not be running');
-        figma.notify(`🔌 Cannot connect to server (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          console.log('[Canvas Weaver] Request timed out');
+          figma.notify(`⏱️ Request timed out (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
+        } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+          console.log('[Canvas Weaver] Network error - server may not be running');
+          figma.notify(`🔌 Cannot connect to server (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
+        } else {
+          figma.notify(`❌ Server error (attempt ${attempt}/${maxRetries}): ${error.message}`, { timeout: 2000, error: true });
+        }
       } else {
-        figma.notify(`❌ Server error (attempt ${attempt}/${maxRetries}): ${error.message}`, { timeout: 2000, error: true });
+        figma.notify(`❌ Unknown error (attempt ${attempt}/${maxRetries})`, { timeout: 2000, error: true });
       }
       
       // If this is the last attempt, return null
@@ -765,7 +866,7 @@ async function performOCR(imageData: {
   
   try {
     // Convert Uint8Array to base64 for sending to UI
-    const base64 = await convertUint8ArrayToBase64(imageData.data);
+    const base64 = await convertUint8ArrayToBase64(new Uint8Array());
     
     // Create unique operation ID
     const operationId = ++ocrOperationId;
@@ -1071,12 +1172,12 @@ async function createEnhancedTextFromBlock(textBlock: TextBlock, index: number):
     const textStyle = determineTextStyle(textBlock, index);
     text.fills = [textStyle.fill];
     
-    // Apply text-specific properties
-    if (textStyle.letterSpacing) {
+    // Apply text-specific properties with proper type handling
+    if (textStyle.letterSpacing !== undefined) {
       text.letterSpacing = textStyle.letterSpacing;
     }
     
-    if (textStyle.lineHeight) {
+    if (textStyle.lineHeight !== undefined) {
       text.lineHeight = textStyle.lineHeight;
     }
     
@@ -1202,7 +1303,7 @@ function determineTextStyle(textBlock: TextBlock, index: number): {
   }
   
   // Line height for better typography
-  style.lineHeight = { value: 1.4, unit: 'PERCENT' };
+  style.lineHeight = { value: 140, unit: 'PERCENT' };
   
   return style;
 }
@@ -1268,10 +1369,10 @@ async function createCardGroups(
         }))
       ];
       
-      const minX = Math.min(...allBounds.map(b => 'x0' in b ? b.x0 : b.x));
-      const minY = Math.min(...allBounds.map(b => 'y0' in b ? b.y0 : b.y));
-      const maxX = Math.max(...allBounds.map(b => 'x1' in b ? b.x1 : b.x + b.width));
-      const maxY = Math.max(...allBounds.map(b => 'y1' in b ? b.y1 : b.y + b.height));
+      const minX = Math.min(...allBounds.map(b => 'x0' in b ? Number(b.x0) : Number(b.x)));
+      const minY = Math.min(...allBounds.map(b => 'y0' in b ? Number(b.y0) : Number(b.y)));
+      const maxX = Math.max(...allBounds.map(b => 'x1' in b ? Number(b.x1) : Number(b.x) + Number(b.width)));
+      const maxY = Math.max(...allBounds.map(b => 'y1' in b ? Number(b.y1) : Number(b.y) + Number(b.height)));
       
       cardFrame.x = minX;
       cardFrame.y = minY;
@@ -1773,7 +1874,7 @@ async function applyComponentStyling(parentFrame: FrameNode): Promise<void> {
   }];
   
   // Add light background if no fill is set
-  if (parentFrame.fills.length === 0) {
+  if (Array.isArray(parentFrame.fills) && parentFrame.fills.length === 0) {
     parentFrame.fills = [{
       type: 'SOLID',
       color: { r: 0.99, g: 0.99, b: 0.99 }
@@ -2104,11 +2205,21 @@ figma.on('close', () => {
     });
     
     // Clean up message handlers
-    figma.ui.off('message', mainMessageHandler);
+    figma.ui.onmessage = null;
   } catch (error) {
     console.error('[Canvas Weaver] Failed to request WebSocket closure:', error);
   }
 });
 
+// Message handler already registered above
+
 // Initial setup
 console.log('[Canvas Weaver] Plugin initialized - Ready to generate components from images');
+
+// Export initialization function
+export function initializePlugin() {
+  console.log('[Canvas Weaver] Plugin initialization complete');
+}
+
+// Call initialization
+initializePlugin();

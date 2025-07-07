@@ -4,16 +4,13 @@
  */
 
 document.addEventListener('DOMContentLoaded', function() {
-  // Enhanced UI elements
-  const enhancedModeToggle = document.getElementById('enhanced-mode-toggle');
-  const multiSelectToggle = document.getElementById('multi-select-toggle');
-  const highDpiToggle = document.getElementById('high-dpi-toggle');
-  const shadowDomToggle = document.getElementById('shadow-dom-toggle');
-  const crossOriginToggle = document.getElementById('cross-origin-toggle');
-  const previewToggle = document.getElementById('preview-toggle');
+  // Auto-Scan UI elements
+  const scanStatusEl = document.getElementById('scanStatus');
+  const imageCountEl = document.getElementById('imageCount');
+  const toggleScanBtn = document.getElementById('toggleScan');
+  const refreshScanBtn = document.getElementById('refreshScan');
   
   // Existing elements
-  const startCaptureBtn = document.getElementById('start-capture');
   const statusEl = document.getElementById('status');
   const loadingEl = document.getElementById('loading');
   const progressContainer = document.getElementById('progress-container');
@@ -21,208 +18,345 @@ document.addEventListener('DOMContentLoaded', function() {
   const successMessage = document.getElementById('success-message');
   const componentsContainerEl = document.getElementById('components-container');
   
-  // Enhanced state
-  let enhancedMode = true;
+  // Auto-scan state
+  let isScanning = false;
+  let imageCount = 0;
+  let capturedComponents = [];
+  let contentScriptReady = false;
+  
+  // Capture options optimized for auto-scanning
   let captureOptions = {
-    multiSelect: false,
     highDPI: true,
     includeShadowDOM: true,
     includeCrossOrigin: true,
-    showPreview: true,
-    confirmCapture: true,
-    quality: 0.95
+    quality: 0.95,
+    autoClipboard: true
   };
   
-  // Legacy state
-  let capturedComponents = [];
-  let componentData = null;
-  let clipboardReady = false;
-  
+  // Test DOM element access
+  console.log('DOM elements found:');
+  console.log('toggleScanBtn:', !!toggleScanBtn);
+  console.log('refreshScanBtn:', !!refreshScanBtn);
+  console.log('scanStatusEl:', !!scanStatusEl);
+  console.log('imageCountEl:', !!imageCountEl);
+  console.log('statusEl:', !!statusEl);
+
   // Initialize popup
-  initializeEnhancedPopup();
+  initializeAutoScanPopup();
+  
+  // Keep popup alive during processing
+  setupKeepAlive();
   
   /**
-   * Initialize enhanced popup functionality
+   * Set up keep alive functionality
    */
-  function initializeEnhancedPopup() {
-    statusEl.textContent = "Initializing enhanced extension...";
+  function setupKeepAlive() {
+    // Send periodic keep-alive messages to background script
+    setInterval(() => {
+      if (chrome && chrome.runtime && chrome.runtime.id) {
+        chrome.runtime.sendMessage({ action: 'keep_alive' }).catch(() => {
+          // Ignore errors if background script is not available
+        });
+      }
+    }, 25000); // Every 25 seconds (Chrome allows 30s max)
+  }
+  
+  /**
+   * Initialize auto-scan popup functionality
+   */
+  function initializeAutoScanPopup() {
+    statusEl.textContent = "Initializing Canvas Weaver...";
     
-    // Set up enhanced mode toggle
-    if (enhancedModeToggle) {
-      enhancedModeToggle.checked = enhancedMode;
-      enhancedModeToggle.addEventListener('change', toggleEnhancedMode);
-    }
+    // Check WebSocket connection status
+    checkWebSocketConnection();
     
-    // Set up capture option toggles
-    if (multiSelectToggle) {
-      multiSelectToggle.checked = captureOptions.multiSelect;
-      multiSelectToggle.addEventListener('change', () => {
-        captureOptions.multiSelect = multiSelectToggle.checked;
-        updateCaptureButtonText();
-      });
-    }
+    // Set up button event listeners
+    setupButtonListeners();
     
-    if (highDpiToggle) {
-      highDpiToggle.checked = captureOptions.highDPI;
-      highDpiToggle.addEventListener('change', () => {
-        captureOptions.highDPI = highDpiToggle.checked;
-      });
-    }
-    
-    if (shadowDomToggle) {
-      shadowDomToggle.checked = captureOptions.includeShadowDOM;
-      shadowDomToggle.addEventListener('change', () => {
-        captureOptions.includeShadowDOM = shadowDomToggle.checked;
-      });
-    }
-    
-    if (crossOriginToggle) {
-      crossOriginToggle.checked = captureOptions.includeCrossOrigin;
-      crossOriginToggle.addEventListener('change', () => {
-        captureOptions.includeCrossOrigin = crossOriginToggle.checked;
-      });
-    }
-    
-    if (previewToggle) {
-      previewToggle.checked = captureOptions.showPreview;
-      previewToggle.addEventListener('change', () => {
-        captureOptions.showPreview = previewToggle.checked;
-      });
-    }
-    
-    // Enhanced capture button
-    if (startCaptureBtn) {
-      startCaptureBtn.addEventListener('click', startEnhancedCapture);
-    }
+    // Wait for content script to be ready before starting auto-scan
+    waitForContentScriptReady();
     
     // Listen for messages
-    chrome.runtime.onMessage.addListener(handleEnhancedMessages);
+    chrome.runtime.onMessage.addListener(handleAutoScanMessages);
     
     // Check content script status
     checkContentScriptStatus();
-    
-    updateCaptureButtonText();
   }
   
   /**
-   * Toggle enhanced mode
+   * Set up button event listeners
    */
-  function toggleEnhancedMode() {
-    enhancedMode = enhancedModeToggle.checked;
-    
-    // Show/hide enhanced options
-    const enhancedOptions = document.getElementById('enhanced-options');
-    if (enhancedOptions) {
-      enhancedOptions.style.display = enhancedMode ? 'block' : 'none';
-    }
-    
-    updateCaptureButtonText();
-    
-    // Update status
-    statusEl.textContent = enhancedMode 
-      ? "Enhanced mode enabled - Advanced capture features available"
-      : "Standard mode - Basic capture functionality";
-  }
-  
-  /**
-   * Start enhanced capture workflow
-   */
-  function startEnhancedCapture() {
-    if (enhancedMode) {
-      startEnhancedSelection();
+  function setupButtonListeners() {
+    if (toggleScanBtn) {
+      toggleScanBtn.addEventListener('click', toggleAutoScan);
+      console.log('Toggle scan button event listener added');
     } else {
-      startLegacyCapture();
+      console.error('toggleScanBtn element not found');
+    }
+    
+    if (refreshScanBtn) {
+      refreshScanBtn.addEventListener('click', refreshScan);
+      console.log('Refresh scan button event listener added');
+    } else {
+      console.error('refreshScanBtn element not found');
     }
   }
   
   /**
-   * Start enhanced element selection
+   * Start auto-scanning for images
    */
-  function startEnhancedSelection() {
-    statusEl.textContent = captureOptions.multiSelect 
-      ? "Select multiple elements (click to select, Enter to capture, Escape to cancel)"
-      : "Click on an element to capture (Escape to cancel)";
+  function startAutoScan() {
+    if (!contentScriptReady) {
+      statusEl.textContent = "Waiting for content script to be ready...";
+      return;
+    }
     
-    showLoading();
+    isScanning = true;
+    updateScanUI();
+    statusEl.textContent = "Auto-scanning page for convertible images...";
     
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "START_ENHANCED_SELECTION",
-        options: captureOptions
-      }, function(response) {
+    try {
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        statusEl.textContent = "Extension context error - please reload the extension";
+        return;
+      }
+      
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         if (chrome.runtime.lastError) {
-          statusEl.textContent = "Error: Could not connect to page. Try refreshing.";
-          hideLoading();
-          console.error("Error starting enhanced selection:", chrome.runtime.lastError);
+          console.error("Error querying tabs:", chrome.runtime.lastError);
+          statusEl.textContent = "Error: Could not access active tab";
           return;
         }
         
-        if (response && response.success) {
-          statusEl.textContent = "Enhanced selection mode active";
-          hideLoading();
+        if (!tabs || !tabs[0]) {
+          console.error("No active tab found");
+          statusEl.textContent = "Error: No active tab found";
+          return;
+        }
+        
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "START_AUTO_SCAN",
+          options: captureOptions
+        }, function(response) {
+          if (chrome.runtime.lastError) {
+            statusEl.textContent = "Error: Could not connect to page. Try refreshing.";
+            const errorMsg = chrome.runtime.lastError.message || 'Unknown error';
+            console.error("Error starting auto-scan:", errorMsg);
+            statusEl.textContent = "Error: " + errorMsg;
+            return;
+          }
           
-          // Update button to stop selection
-          startCaptureBtn.textContent = "Stop Selection";
-          startCaptureBtn.onclick = stopEnhancedSelection;
-        } else {
-          statusEl.textContent = "Failed to start enhanced selection";
-          hideLoading();
-        }
+          if (response && response.success) {
+            statusEl.textContent = "Hover over highlighted images to see them, click to capture";
+          } else {
+            statusEl.textContent = "Failed to start auto-scan mode";
+            console.error("Auto-scan start failed:", response);
+          }
+        });
       });
-    });
+    } catch (error) {
+      console.error("Exception in startAutoScan:", error);
+      statusEl.textContent = "Error: Extension context issue. Try reloading the extension.";
+    }
   }
   
   /**
-   * Stop enhanced element selection
+   * Stop auto-scanning
    */
-  function stopEnhancedSelection() {
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "STOP_ENHANCED_SELECTION"
-      }, function(response) {
-        statusEl.textContent = "Selection stopped";
-        
-        // Restore button
-        updateCaptureButtonText();
-        startCaptureBtn.onclick = startEnhancedCapture;
-      });
-    });
-  }
-  
-  /**
-   * Start legacy capture for backward compatibility
-   */
-  function startLegacyCapture() {
-    statusEl.textContent = "Hover over any component or image and click to capture";
-    showLoading();
+  function stopAutoScan() {
+    isScanning = false;
+    updateScanUI();
+    statusEl.textContent = "Auto-scan stopped";
     
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {action: "START_COMPONENT_CAPTURE"}, function(response) {
+    try {
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         if (chrome.runtime.lastError) {
-          statusEl.textContent = "Error: Could not connect to page. Try refreshing.";
-          hideLoading();
-          console.error("Error starting component capture:", chrome.runtime.lastError);
+          console.error("Error querying tabs:", chrome.runtime.lastError);
           return;
         }
         
-        if (response && response.success) {
-          statusEl.textContent = "Hover and click on a component to capture";
-          hideLoading();
-        } else {
-          statusEl.textContent = "Failed to start capture mode";
-          hideLoading();
+        if (!tabs || !tabs[0]) {
+          console.error("No active tab found");
+          return;
         }
+        
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "STOP_AUTO_SCAN"
+        }, function(response) {
+          if (chrome.runtime.lastError) {
+            console.error("Error stopping auto-scan:", chrome.runtime.lastError);
+          }
+        });
       });
-    });
+    } catch (error) {
+      console.error("Exception in stopAutoScan:", error);
+    }
   }
   
   /**
-   * Handle enhanced messages from content script
+   * Toggle auto-scanning
    */
-  function handleEnhancedMessages(message, sender, sendResponse) {
-    console.log('Enhanced popup received message:', message.action);
+  function toggleAutoScan() {
+    if (isScanning) {
+      stopAutoScan();
+    } else {
+      startAutoScan();
+    }
+  }
+  
+  /**
+   * Refresh scan
+   */
+  function refreshScan() {
+    if (isScanning) {
+      stopAutoScan();
+      setTimeout(startAutoScan, 100);
+    } else {
+      startAutoScan();
+    }
+  }
+  
+  /**
+   * Update scan UI elements
+   */
+  function updateScanUI() {
+    if (toggleScanBtn) {
+      const buttonText = toggleScanBtn.querySelector('.button-text');
+      const buttonIcon = toggleScanBtn.querySelector('.button-icon');
+      
+      if (buttonText && buttonIcon) {
+        if (isScanning) {
+          buttonText.textContent = 'Stop Scanning';
+          buttonIcon.textContent = '🛑';
+          toggleScanBtn.className = 'action-button primary';
+        } else {
+          buttonText.textContent = 'Start Scanning';
+          buttonIcon.textContent = '👁️';
+          toggleScanBtn.className = 'action-button secondary';
+        }
+      }
+    }
+    
+    // Update scan status
+    if (scanStatusEl) {
+      const title = scanStatusEl.querySelector('.scan-title');
+      const description = scanStatusEl.querySelector('.scan-description');
+      
+      if (title && description) {
+        if (isScanning) {
+          title.textContent = 'Auto-Scanning Page';
+          description.textContent = 'Hover over images to highlight them';
+        } else {
+          title.textContent = 'Scan Stopped';
+          description.textContent = 'Click "Start Scanning" to begin';
+        }
+      }
+    }
+  }
+  
+  /**
+   * Update image count display
+   */
+  function updateImageCount(count) {
+    imageCount = count;
+    if (imageCountEl) {
+      imageCountEl.textContent = count;
+    }
+  }
+  
+  // Note: Enhanced mode functions removed as they reference undefined elements
+  
+  /**
+   * Check WebSocket connection status
+   */
+  function checkWebSocketConnection() {
+    try {
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        updateConnectionStatus(false, 'error');
+        return;
+      }
+      
+      chrome.runtime.sendMessage({ action: 'get_connection_status' }, function(response) {
+        if (chrome.runtime.lastError) {
+          console.error("Error checking WebSocket connection:", chrome.runtime.lastError);
+          updateConnectionStatus(false, 'error');
+          return;
+        }
+        
+        if (response) {
+          updateConnectionStatus(response.connected, response.state);
+        } else {
+          updateConnectionStatus(false, 'error');
+        }
+      });
+    } catch (error) {
+      console.error("Exception in checkWebSocketConnection:", error);
+      updateConnectionStatus(false, 'error');
+    }
+  }
+  
+  /**
+   * Update connection status in UI
+   */
+  function updateConnectionStatus(connected, state) {
+    const connectionIndicator = document.getElementById('connection-status');
+    if (connectionIndicator) {
+      if (connected) {
+        connectionIndicator.textContent = '🟢 Connected to Figma';
+        connectionIndicator.className = 'connection-status connected';
+      } else {
+        connectionIndicator.textContent = '🔴 Chrome extension not connected';
+        connectionIndicator.className = 'connection-status disconnected';
+      }
+    }
+    
+    // Update main status if not busy with other operations
+    if (statusEl && statusEl.textContent.includes('Initializing')) {
+      statusEl.textContent = connected 
+        ? 'Extension ready - WebSocket connected to Figma'
+        : 'Extension ready - Waiting for Figma connection';
+    }
+  }
+
+  /**
+   * Handle auto-scan messages from content script
+   */
+  function handleAutoScanMessages(message, sender, sendResponse) {
+    console.log('Auto-scan popup received message:', message.action);
     
     switch (message.action) {
+      case 'websocket_status':
+        updateConnectionStatus(message.connected, message.state);
+        break;
+        
+      case 'component_ready':
+        handleComponentReady(message.data);
+        break;
+        
+      case 'AUTO_SCAN_STARTED':
+        handleScanStarted(message.data);
+        break;
+        
+      case 'AUTO_SCAN_STOPPED':
+        handleScanStopped();
+        break;
+        
+      case 'IMAGE_COUNT_UPDATED':
+        updateImageCount(message.count);
+        break;
+        
+      case 'IMAGE_CAPTURED':
+        handleImageCaptured(message.data);
+        break;
+        
+      case 'CAPTURE_COMPLETE':
+        handleCaptureComplete(message.data);
+        break;
+        
+      case 'CAPTURE_ERROR':
+        handleCaptureError(message.error);
+        break;
+        
       case 'enhanced_ready':
         handleEnhancedReady(message.features);
         break;
@@ -255,19 +389,122 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   
   /**
+   * Handle component ready from Figma
+   */
+  function handleComponentReady(data) {
+    showSuccess('Component processed successfully in Figma!');
+    statusEl.textContent = 'Component ready in Figma - press Cmd+V (Mac) or Ctrl+V (Windows) to paste';
+    console.log('Component ready in Figma:', data);
+  }
+  
+  /**
+   * Handle scan started
+   */
+  function handleScanStarted(data) {
+    isScanning = true;
+    updateScanUI();
+    updateImageCount(data.imageCount || 0);
+    statusEl.textContent = 'Auto-scan active - hover over images to highlight them';
+  }
+  
+  /**
+   * Handle scan stopped
+   */
+  function handleScanStopped() {
+    isScanning = false;
+    updateScanUI();
+    statusEl.textContent = 'Auto-scan stopped';
+  }
+  
+  /**
+   * Handle image captured
+   */
+  function handleImageCaptured(data) {
+    showProgress();
+    updateProgress(50);
+    statusEl.textContent = 'Processing image with AI...';
+    
+    // Send to WebSocket for processing
+    sendImageToFigma(data);
+  }
+  
+  /**
+   * Show progress state
+   */
+  function showProgress() {
+    if (progressContainer) progressContainer.style.display = 'block';
+    if (loadingEl) loadingEl.style.display = 'block';
+  }
+  
+  /**
+   * Handle capture complete
+   */
+  function handleCaptureComplete(data) {
+    hideProgress();
+    showSuccess('Image captured and sent to Figma!');
+    statusEl.textContent = 'Go to Figma and press Cmd+V (Mac) or Ctrl+V (Windows) to paste your component';
+  }
+  
+  /**
+   * Handle capture error
+   */
+  function handleCaptureError(error) {
+    hideProgress();
+    const errorMsg = typeof error === 'object' ? (error.message || JSON.stringify(error)) : error;
+    statusEl.textContent = `Capture failed: ${errorMsg}`;
+    console.error('Auto-scan capture error:', error);
+  }
+  
+  /**
+   * Send captured image to Figma via WebSocket
+   */
+  function sendImageToFigma(imageData) {
+    if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+      hideProgress();
+      statusEl.textContent = 'Extension context error - please reload the extension';
+      return;
+    }
+    
+    chrome.runtime.sendMessage({
+      action: 'send_component_data',
+      data: {
+        type: 'image_capture',
+        imageData: imageData.dataUrl,
+        metadata: imageData.metadata,
+        timestamp: Date.now(),
+        source: 'auto-scan'
+      }
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        hideProgress();
+        statusEl.textContent = 'Failed to send to Figma - extension error';
+        console.error('Extension error:', chrome.runtime.lastError);
+        return;
+      }
+      
+      if (response && response.success) {
+        updateProgress(100);
+        setTimeout(() => {
+          hideProgress();
+          showSuccess('Image sent to Figma successfully!');
+          statusEl.textContent = 'Component ready - go to Figma and press Cmd+V or Ctrl+V to paste';
+        }, 500);
+      } else {
+        hideProgress();
+        statusEl.textContent = 'Failed to send to Figma - WebSocket not connected';
+        console.error('Failed to send image to Figma');
+      }
+    });
+  }
+
+  /**
    * Handle enhanced ready status
    */
   function handleEnhancedReady(features) {
     if (features.enhancedCapture && features.enhancedSelection) {
       statusEl.textContent = "Enhanced features ready";
-      startCaptureBtn.disabled = false;
     } else {
       statusEl.textContent = "Enhanced features not available - using standard mode";
-      enhancedMode = false;
-      if (enhancedModeToggle) {
-        enhancedModeToggle.checked = false;
-        enhancedModeToggle.disabled = true;
-      }
     }
   }
   
@@ -284,8 +521,6 @@ document.addEventListener('DOMContentLoaded', function() {
    */
   function handleSelectionStopped() {
     statusEl.textContent = "Selection stopped";
-    updateCaptureButtonText();
-    startCaptureBtn.onclick = startEnhancedCapture;
   }
   
   /**
@@ -307,6 +542,49 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   
   /**
+   * Wait for content script to be ready before starting auto-scan
+   */
+  function waitForContentScriptReady() {
+    const maxAttempts = 10;
+    let attempts = 0;
+    
+    function checkContentScript() {
+      attempts++;
+      
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        statusEl.textContent = "Extension context error - please reload the extension";
+        return;
+      }
+      
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+        if (chrome.runtime.lastError || !tabs || !tabs[0]) {
+          if (attempts < maxAttempts) {
+            setTimeout(checkContentScript, 500);
+          } else {
+            statusEl.textContent = "Could not access active tab - please refresh the page";
+          }
+          return;
+        }
+        
+        chrome.tabs.sendMessage(tabs[0].id, {action: "STATUS_CHECK"}, function(response) {
+          if (chrome.runtime.lastError) {
+            if (attempts < maxAttempts) {
+              setTimeout(checkContentScript, 500);
+            } else {
+              statusEl.textContent = "Content script not ready - please refresh the page";
+            }
+          } else if (response && response.success) {
+            contentScriptReady = true;
+            startAutoScan();
+          }
+        });
+      });
+    }
+    
+    checkContentScript();
+  }
+  
+  /**
    * Handle capture complete
    */
   function handleCaptureComplete(data) {
@@ -320,15 +598,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   
   /**
-   * Handle capture error
-   */
-  function handleCaptureError(error) {
-    hideProgress();
-    statusEl.textContent = `Capture failed: ${error}`;
-    console.error('Enhanced capture error:', error);
-  }
-  
-  /**
    * Handle legacy messages for backward compatibility
    */
   function handleLegacyMessages(message, sender, sendResponse) {
@@ -337,31 +606,33 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   
   /**
-   * Update capture button text
-   */
-  function updateCaptureButtonText() {
-    if (!startCaptureBtn) return;
-    
-    if (enhancedMode) {
-      const modeText = captureOptions.multiSelect ? "Select Multiple Elements" : "Select Element";
-      startCaptureBtn.textContent = modeText;
-    } else {
-      startCaptureBtn.textContent = "Start Capture";
-    }
-  }
-  
-  /**
    * Check content script status
    */
   function checkContentScriptStatus() {
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {action: "STATUS_CHECK"}, function(response) {
+    try {
+      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         if (chrome.runtime.lastError) {
-          statusEl.textContent = "Content script not ready - please refresh the page";
-          startCaptureBtn.disabled = true;
+          console.error("Error querying tabs for status check:", chrome.runtime.lastError);
+          return;
         }
+        
+        if (!tabs || !tabs[0]) {
+          console.error("No active tab found for status check");
+          return;
+        }
+        
+        chrome.tabs.sendMessage(tabs[0].id, {action: "STATUS_CHECK"}, function(response) {
+          if (chrome.runtime.lastError) {
+            console.log("Content script not ready:", chrome.runtime.lastError.message);
+            statusEl.textContent = "Content script not ready - please refresh the page";
+          } else if (response && response.success) {
+            console.log("Content script ready, auto-scan:", response.autoScan, "images:", response.imageCount);
+          }
+        });
       });
-    });
+    } catch (error) {
+      console.error("Exception in checkContentScriptStatus:", error);
+    }
   }
   
   /**
@@ -388,8 +659,41 @@ document.addEventListener('DOMContentLoaded', function() {
    * Send components to Figma
    */
   function sendComponentsToFigma() {
-    // Implementation depends on existing Figma integration
-    console.log('Sending components to Figma...');
+    if (capturedComponents.length === 0) {
+      statusEl.textContent = 'No components to send to Figma';
+      return;
+    }
+    
+    if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+      statusEl.textContent = 'Extension context error - please reload the extension';
+      return;
+    }
+
+    statusEl.textContent = 'Sending components to Figma via WebSocket...';
+    
+    // Send component data through background script WebSocket
+    chrome.runtime.sendMessage({
+      action: 'send_component_data',
+      data: {
+        components: capturedComponents,
+        timestamp: Date.now(),
+        source: 'chrome-extension'
+      }
+    }, function(response) {
+      if (chrome.runtime.lastError) {
+        statusEl.textContent = 'Failed to send components - extension error';
+        console.error('Extension error:', chrome.runtime.lastError);
+        return;
+      }
+      
+      if (response && response.success) {
+        statusEl.textContent = 'Components sent to Figma successfully!';
+        showSuccess('Components are being processed in Figma');
+      } else {
+        statusEl.textContent = 'Failed to send components - WebSocket not connected';
+        console.error('Failed to send components to Figma');
+      }
+    });
   }
   
   /**

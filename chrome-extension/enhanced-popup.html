@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Sticker Component Analyzer - Enhanced</title>
+  <title>Canvas Weaver - UI Component Capture</title>
   <style>
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -190,6 +190,27 @@
       color: #4e68f9;
     }
     
+    .connection-status {
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      text-align: center;
+      font-weight: 500;
+      margin-bottom: 10px;
+    }
+    
+    .connection-status.connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .connection-status.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
     #status {
       font-size: 13px;
       color: #666;
@@ -309,77 +330,169 @@
       padding-top: 16px;
       border-top: 1px solid #e0e0e0;
     }
+    
+    /* Auto-Scan UI */
+    .scan-status {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #e0e0e0;
+      margin-bottom: 16px;
+    }
+    
+    .scan-indicator {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .scan-icon {
+      font-size: 24px;
+      animation: pulse 2s infinite;
+    }
+    
+    .scan-text {
+      flex: 1;
+    }
+    
+    .scan-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 2px;
+    }
+    
+    .scan-description {
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .image-counter {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      text-align: center;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    }
+    
+    .counter-number {
+      font-size: 24px;
+      font-weight: 700;
+      display: block;
+      line-height: 1;
+    }
+    
+    .counter-text {
+      font-size: 11px;
+      opacity: 0.9;
+      margin-top: 2px;
+    }
+    
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    
+    .action-button {
+      flex: 1;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.3s ease;
+    }
+    
+    .action-button.primary {
+      background-color: #ff4757;
+      color: white;
+      box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+    }
+    
+    .action-button.primary:hover {
+      background-color: #ff3742;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
+    }
+    
+    .action-button.secondary {
+      background-color: #f1f2f6;
+      color: #333;
+      border: 1px solid #e0e0e0;
+    }
+    
+    .action-button.secondary:hover {
+      background-color: #e8e9ed;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .button-icon {
+      font-size: 14px;
+    }
+    
+    .button-text {
+      font-size: 12px;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.1); opacity: 0.7; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>🎯 Sticker Component Analyzer</h1>
+    <h1>🌊 Canvas Weaver</h1>
   </header>
   
   <div class="container">
-    <!-- Enhanced Mode Toggle -->
-    <div class="mode-toggle">
-      <label for="enhanced-mode-toggle">Enhanced Mode</label>
-      <div class="toggle-switch">
-        <input type="checkbox" id="enhanced-mode-toggle" checked>
-        <span class="toggle-slider"></span>
-      </div>
-    </div>
-    
-    <!-- Enhanced Options -->
-    <div class="enhanced-options" id="enhanced-options">
-      <h3>Capture Options</h3>
-      <div class="option-group">
-        <div class="option-item">
-          <label for="multi-select-toggle">Multi-element selection</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="multi-select-toggle">
-            <span class="toggle-slider"></span>
-          </div>
-        </div>
-        
-        <div class="option-item">
-          <label for="preview-toggle">Show preview</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="preview-toggle" checked>
-            <span class="toggle-slider"></span>
-          </div>
-        </div>
-        
-        <div class="option-item">
-          <label for="high-dpi-toggle">High-DPI capture</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="high-dpi-toggle" checked>
-            <span class="toggle-slider"></span>
-          </div>
-        </div>
-        
-        <div class="option-item">
-          <label for="shadow-dom-toggle">Include Shadow DOM</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="shadow-dom-toggle" checked>
-            <span class="toggle-slider"></span>
-          </div>
-        </div>
-        
-        <div class="option-item">
-          <label for="cross-origin-toggle">Cross-origin elements</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="cross-origin-toggle" checked>
-            <span class="toggle-slider"></span>
-          </div>
+    <!-- Auto-Scan Status -->
+    <div class="scan-status" id="scanStatus">
+      <div class="scan-indicator">
+        <div class="scan-icon">🔍</div>
+        <div class="scan-text">
+          <div class="scan-title">Auto-Scanning Page</div>
+          <div class="scan-description">Hover over images to highlight them</div>
         </div>
       </div>
     </div>
     
-    <!-- Main Action Button -->
-    <button id="start-capture" class="main-action">
-      🎯 Select Element
-    </button>
+    <!-- Image Counter -->
+    <div class="image-counter" id="imageCounter">
+      <span class="counter-number" id="imageCount">0</span>
+      <span class="counter-text">convertible images found</span>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="quick-actions">
+      <button id="toggleScan" class="action-button primary">
+        <span class="button-icon">👁️</span>
+        <span class="button-text">Stop Scanning</span>
+      </button>
+      
+      <button id="refreshScan" class="action-button secondary">
+        <span class="button-icon">🔄</span>
+        <span class="button-text">Refresh</span>
+      </button>
+    </div>
     
     <!-- Instructions -->
     <div class="instructions">
-      <strong>Enhanced Mode:</strong> Select elements with improved accuracy, high-DPI support, and advanced features like Shadow DOM and cross-origin handling.
+      <strong>How it works:</strong> Images are automatically highlighted with blue overlay when you hover over them. Click any highlighted image to convert it to a fully editable Figma component. Then go to Figma and press <strong>Cmd+V</strong> (Mac) or <strong>Ctrl+V</strong> (Windows) to paste.
+    </div>
+    
+    <!-- Connection Status -->
+    <div id="connection-status" class="connection-status disconnected">
+      🔴 Chrome extension not connected
     </div>
     
     <!-- Status -->

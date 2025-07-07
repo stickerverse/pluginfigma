@@ -615,7 +615,7 @@
           If the Chrome extension isn't connecting:
         </p>
         <ul>
-          <li>Make sure the WebSocket server is running on port 9001</li>
+          <li>Make sure the WebSocket server is running on port 8082</li>
           <li>Check that both the extension and plugin are up to date</li>
           <li>Try refreshing the connection using the refresh button</li>
         </ul>
@@ -772,9 +772,18 @@
     function clearPreview() {
       capturedImageData = null;
       elements.previewArea.classList.remove('has-image');
-      elements.previewArea.innerHTML = '';
-      elements.previewArea.appendChild(elements.previewPlaceholder);
+      elements.previewArea.innerHTML = `
+        <div class="preview-placeholder" id="previewPlaceholder">
+          <div class="preview-icon">📷</div>
+          <p>Waiting for component capture...</p>
+          <p style="font-size: 11px; margin-top: 8px;">
+            Make sure the Chrome extension is active and connected
+          </p>
+        </div>
+      `;
       elements.generateButton.disabled = true;
+      elements.manualGenerateButton.disabled = false;
+      elements.manualGenerateButton.innerHTML = 'Generate from Base64';
       hideProgress();
       elements.captureMessages.innerHTML = '';
     }
@@ -786,6 +795,8 @@
       isProcessing = true;
       elements.generateButton.disabled = true;
       elements.generateButton.innerHTML = '<span class="loading-spinner"></span> Generating...';
+      
+      showMessage('Starting component generation...', 'info');
       
       showProgress();
       updateProgressStep('capture', 'complete');
@@ -805,9 +816,18 @@
     elements.manualGenerateButton.addEventListener('click', () => {
       const base64 = elements.base64Input.value.trim();
       if (!base64) {
-        alert('Please paste base64 image data');
+        showMessage('Please paste base64 image data', 'error');
         return;
       }
+      
+      // Validate base64 format
+      if (!base64.startsWith('data:image/') && !base64.match(/^[A-Za-z0-9+/]*={0,2}$/)) {
+        showMessage('Invalid base64 format. Please paste valid image data.', 'error');
+        return;
+      }
+      
+      elements.manualGenerateButton.disabled = true;
+      elements.manualGenerateButton.innerHTML = '<span class="loading-spinner"></span> Generating...';
       
       parent.postMessage({
         pluginMessage: {
@@ -815,26 +835,88 @@
           base64: base64
         }
       }, '*');
+      
+      showMessage('Generating component from base64 data...', 'info');
     });
     
     elements.refreshConnection.addEventListener('click', () => {
-      // Trigger reconnection attempt
-      window.postMessage({
-        source: 'sticker-figma-plugin',
-        type: 'request-connection-status'
+      // Reset connection attempts counter and try again
+      connectionAttempts = 0;
+      
+      // Close existing connection if any
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      
+      // Clear any existing reconnection interval
+      if (reconnectInterval) {
+        clearInterval(reconnectInterval);
+        reconnectInterval = null;
+      }
+      
+      showMessage('Reconnecting to extension...', 'info');
+      
+      // Request connection status from plugin
+      parent.postMessage({
+        pluginMessage: {
+          type: 'checkExtensionStatus',
+          forceReconnect: true
+        }
       }, '*');
+      
+      // Start connection process
+      connectWebSocket();
     });
     
     // WebSocket communication
     let ws = null;
     let reconnectInterval = null;
+    let connectionAttempts = 0;
+    const MAX_CONNECTION_ATTEMPTS = 5;
     
     function connectWebSocket() {
+      // Stop reconnecting after too many attempts
+      if (connectionAttempts >= MAX_CONNECTION_ATTEMPTS) {
+        console.log('[Canvas Weaver] Maximum connection attempts reached');
+        showMessage('Cannot connect to extension server. Please ensure the server is running and refresh the plugin.', 'error');
+        updateConnectionStatus(false);
+        
+        if (reconnectInterval) {
+          clearInterval(reconnectInterval);
+          reconnectInterval = null;
+        }
+        return;
+      }
+      
+      connectionAttempts++;
+      
       try {
-        ws = new WebSocket('ws://localhost:9001');
+        // Get the websocket URL from the parent plugin via postMessage
+        // This allows the main plugin code to configure the connection
+        parent.postMessage({
+          pluginMessage: {
+            type: 'getWebSocketUrl'
+          }
+        }, '*');
+        
+        // Connection will be made when URL is received from the plugin
+        showMessage(`Attempting to connect to extension (Attempt ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS})`, 'info');
+      } catch (error) {
+        console.error('[Canvas Weaver] Failed to request WebSocket URL:', error);
+        handleConnectionError(error);
+      }
+    }
+    
+    // Create WebSocket connection with the provided URL
+    function createWebSocketConnection(url) {
+      try {
+        console.log(`[Canvas Weaver] Connecting to WebSocket at ${url}`);
+        ws = new WebSocket(url);
         
         ws.onopen = () => {
           console.log('[Canvas Weaver] WebSocket connected');
+          connectionAttempts = 0; // Reset counter on successful connection
           updateConnectionStatus(true);
           showMessage('Connected to Chrome extension', 'success');
           
@@ -842,6 +924,16 @@
           if (reconnectInterval) {
             clearInterval(reconnectInterval);
             reconnectInterval = null;
+          }
+          
+          // Send a ping to verify connection is working
+          try {
+            ws.send(JSON.stringify({
+              type: 'ping',
+              timestamp: Date.now()
+            }));
+          } catch (error) {
+            console.error('[Canvas Weaver] Error sending ping:', error);
           }
         };
         
@@ -854,21 +946,46 @@
               capturedImageData = data.imageData;
               showImagePreview(data.imageData);
               showMessage('Component captured successfully!', 'success');
+            } else if (data.type === 'processedImage' && data.data) {
+              console.log('[Canvas Weaver] Received processed image from auto-scan');
+              
+              // Show the processed image in preview if available
+              if (data.data && data.data.imageData) {
+                capturedImageData = data.data.imageData;
+                showImagePreview(data.data.imageData);
+              }
+              
+              // Automatically generate component from processed data
+              parent.postMessage({
+                pluginMessage: {
+                  type: 'generateComponentFromProcessedData',
+                  data: data.data
+                }
+              }, '*');
+              
+              showMessage('Auto-scan image processed! Component is being generated...', 'success');
+            } else if (data.type === 'pong') {
+              console.log('[Canvas Weaver] Received pong response');
             }
           } catch (error) {
             console.error('[Canvas Weaver] Error parsing message:', error);
+            showMessage('Error processing message from extension', 'error');
           }
         };
         
         ws.onerror = (error) => {
           console.error('[Canvas Weaver] WebSocket error:', error);
-          updateConnectionStatus(false);
+          handleConnectionError(error);
         };
         
-        ws.onclose = () => {
-          console.log('[Canvas Weaver] WebSocket disconnected');
+        ws.onclose = (event) => {
+          console.log(`[Canvas Weaver] WebSocket disconnected (code: ${event.code}, reason: ${event.reason})`);
           updateConnectionStatus(false);
           ws = null;
+          
+          if (event.code === 1006) {
+            showMessage('Connection lost unexpectedly. The server may be down.', 'error');
+          }
           
           // Start reconnection attempts
           if (!reconnectInterval) {
@@ -877,12 +994,28 @@
         };
       } catch (error) {
         console.error('[Canvas Weaver] Failed to connect:', error);
-        updateConnectionStatus(false);
+        handleConnectionError(error);
       }
     }
     
-    // Initialize WebSocket connection
-    connectWebSocket();
+    function handleConnectionError(error) {
+      updateConnectionStatus(false);
+      
+      // Check for specific error types
+      if (error.message && error.message.includes('Receiving end does not exist')) {
+        showMessage('Chrome extension not detected. Please ensure the extension is installed and active.', 'error');
+      } else if (error.message && error.message.includes('SecurityError')) {
+        showMessage('Connection blocked by security policy. Check plugin permissions.', 'error');
+      } else {
+        showMessage('Failed to connect to extension server', 'error');
+      }
+    }
+    
+    // Initialize connection with delay to ensure plugin is ready
+    setTimeout(() => {
+      connectWebSocket();
+      checkStatus();
+    }, 1000);
     
     // Listen for messages from Figma plugin
     window.addEventListener('message', (event) => {
@@ -892,6 +1025,25 @@
       console.log('[Canvas Weaver UI] Received from plugin:', msg);
       
       switch (msg.type) {
+        case 'websocketUrl':
+          // Received WebSocket URL from the plugin
+          if (msg.url) {
+            createWebSocketConnection(msg.url);
+          } else {
+            showMessage('Failed to get WebSocket URL from plugin', 'error');
+          }
+          break;
+          
+        case 'extensionStatus':
+          // Update UI based on extension status
+          updateConnectionStatus(msg.connected);
+          if (msg.connected) {
+            showMessage('Chrome extension detected and active', 'success');
+          } else {
+            showMessage('Chrome extension not detected or inactive', 'error');
+          }
+          break;
+          
         case 'generationComplete':
           isProcessing = false;
           elements.generateButton.disabled = false;
@@ -911,7 +1063,7 @@
             }, 2000);
           } else {
             hideProgress();
-            showMessage(`Generation failed: ${msg.error}`, 'error');
+            showMessage(`Generation failed: ${msg.error || 'Unknown error'}`, 'error');
           }
           break;
           
@@ -925,17 +1077,94 @@
             updateProgress(75);
           }
           break;
+          
+        case 'auto-scan-complete':
+          isProcessing = false;
+          elements.generateButton.disabled = false;
+          elements.generateButton.innerHTML = 'Generate Component';
+          
+          if (msg.success) {
+            updateProgressStep('analyze', 'complete');
+            updateProgressStep('generate', 'complete');
+            updateProgressStep('complete', 'complete');
+            updateProgress(100);
+            
+            showMessage('Auto-scan component generated successfully!', 'success');
+            
+            // Clear preview after a delay
+            setTimeout(() => {
+              clearPreview();
+            }, 2000);
+          } else {
+            hideProgress();
+            showMessage(`Auto-scan generation failed: ${msg.error || 'Unknown error'}`, 'error');
+          }
+          break;
+          
+        case 'error':
+          showMessage(`Error: ${msg.message || 'Unknown error'}`, 'error');
+          isProcessing = false;
+          elements.generateButton.disabled = false;
+          elements.generateButton.innerHTML = 'Generate Component';
+          elements.manualGenerateButton.disabled = false;
+          elements.manualGenerateButton.innerHTML = 'Generate from Base64';
+          hideProgress();
+          break;
       }
     });
     
-    // Announce plugin presence
-    setInterval(() => {
-      window.postMessage({
-        source: 'canvas-weaver-plugin',
-        type: 'plugin-ready',
-        timestamp: Date.now()
+    // Handle window errors
+    window.onerror = function(message, source, lineno, colno, error) {
+      console.error('[Canvas Weaver] Window error:', message, error);
+      showMessage(`UI Error: ${message}`, 'error');
+      return false; // Allow default error handling
+    };
+    
+    // Handle unhandled promise rejections
+    window.addEventListener('unhandledrejection', function(event) {
+      console.error('[Canvas Weaver] Unhandled promise rejection:', event.reason);
+      showMessage(`Promise Error: ${event.reason}`, 'error');
+      event.preventDefault();
+    });
+    
+    // Cleanup function to prevent memory leaks
+    function cleanup() {
+      // Close WebSocket connection if open
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        console.log('[Canvas Weaver] Closing WebSocket connection');
+        ws.close();
+      }
+      
+      // Clear intervals
+      if (reconnectInterval) {
+        clearInterval(reconnectInterval);
+      }
+    }
+    
+    // Clean up when page unloads
+    window.addEventListener('beforeunload', cleanup);
+    
+    // Announce plugin presence and check extension status
+    function checkStatus() {
+      parent.postMessage({
+        pluginMessage: {
+          type: 'checkExtensionStatus',
+          timestamp: Date.now()
+        }
       }, '*');
-    }, 2000);
+    }
+    
+    // Check status periodically
+    const statusInterval = setInterval(checkStatus, 10000); // Reduced frequency
+    
+    // Add cleanup for status interval
+    window.addEventListener('beforeunload', () => {
+      clearInterval(statusInterval);
+      cleanup();
+    });
+    
+    // Also cleanup when plugin closes
+    window.addEventListener('pagehide', cleanup);
   </script>
 </body>
 </html>

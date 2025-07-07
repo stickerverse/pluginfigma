@@ -6,15 +6,21 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const potrace = require('potrace');
+const { config, ServerLogger } = require('./production-config');
 
 class WebSocketBroker {
-  constructor(port = 8080, httpPort = 3000) {
+  constructor(port = config.websocketPort, httpPort = config.httpPort) {
     this.clients = new Map();
     
-    // Create Express app with configurations from both branches
+    // Create Express app with production-ready CORS
     this.app = express();
-    this.app.use(cors());
-    this.app.use(express.json({ limit: '50mb' }));
+    this.app.use(cors({
+      origin: config.corsOrigins,
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization']
+    }));
+    this.app.use(express.json({ limit: config.maxPayloadSize }));
     this.app.use(express.urlencoded({ extended: true }));
     
     // Create HTTP server with Express
@@ -34,9 +40,9 @@ class WebSocketBroker {
     });
     
     // Start WebSocket server
-    this.server.listen(port, () => {
-      console.log(`[Canvas Weaver Server] HTTP server listening on http://localhost:${port}`);
-      console.log(`[Canvas Weaver Server] WebSocket server listening on ws://localhost:${port}`);
+    this.server.listen(8082, () => {
+      console.log(`[Canvas Weaver Server] HTTP server listening on http://localhost:8082`);
+      console.log(`[Canvas Weaver Server] WebSocket server listening on ws://localhost:8082`);
     });
   }
 
@@ -700,4 +706,4 @@ class WebSocketBroker {
 }
 
 // Start the server
-new WebSocketBroker(8080);
+new WebSocketBroker(8082);
